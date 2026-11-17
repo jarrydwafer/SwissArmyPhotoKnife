@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">SwissArmyPhotoKnife</string>
+    <string name="title_activity_main">SwissArmyPhotoKnife</string>
+    <string name="package_name">com.jarrydwafer.meter</string>
+    <string name="custom_url_scheme">com.jarrydwafer.meter</string>
+</resources>

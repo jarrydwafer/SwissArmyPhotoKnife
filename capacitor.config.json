@@ -1,0 +1,11 @@
+{
+  "appId": "com.jarrydwafer.meter",
+  "appName": "SwissArmyPhotoKnife",
+  "webDir": "www",
+  "backgroundColor": "#0b0b0b",
+  "plugins": {
+    "SystemBars": {
+      "style": "DARK"
+    }
+  }
+}

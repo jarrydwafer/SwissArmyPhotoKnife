@@ -1,0 +1,21 @@
+# Dependencies and build output
+node_modules/
+android/app/src/main/assets/public/
+android/app/src/main/assets/capacitor.config.json
+android/app/src/main/assets/capacitor.plugins.json
+
+# Signing keys never go in the repo
+*.jks
+*.keystore
+keystore.properties
+android/key.properties
+
+# History and working files that are not part of the project
+/camera-test*.html
+/*.png
+/docs/NATIVE_ANDROID_BRIEF.md
+
+# Machine files
+.DS_Store
+.env
+.env.*

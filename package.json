@@ -1,0 +1,21 @@
+{
+  "name": "swissarmyphotoknife",
+  "version": "0.6.0",
+  "private": true,
+  "description": "Film light meter and shot logbook: one web page, also installed as an Android app.",
+  "license": "AGPL-3.0-or-later",
+  "scripts": {
+    "web": "python3 -m http.server 8080 --directory www",
+    "sync": "cap sync android",
+    "apk": "cap sync android && cd android && ./gradlew assembleDebug",
+    "phone": "npm run apk && adb install -r android/app/build/outputs/apk/debug/app-debug.apk && adb shell am start -n com.jarrydwafer.meter/.MainActivity",
+    "studio": "cap open android"
+  },
+  "dependencies": {
+    "@capacitor/android": "^8.6.2",
+    "@capacitor/core": "^8.6.2"
+  },
+  "devDependencies": {
+    "@capacitor/cli": "^8.6.2"
+  }
+}

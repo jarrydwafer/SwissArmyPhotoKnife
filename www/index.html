@@ -1,0 +1,2466 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b0b0b">
+<title>SwissArmyPhotoKnife</title>
+<!--
+  SwissArmyPhotoKnife — film light meter and shot logbook (v0.6)
+  License: AGPL-3.0-or-later
+
+  One page, two homes: the website and the installed Android app (Capacitor).
+    - focal-length crop (Lightmeter-style zoomed viewfinder)
+    - locked-exposure metering with auto-ranging
+    - live auto-exposure readout
+    - calibration against a camera with a working meter
+    - logbook of cameras, lenses, films, rolls and shots, kept on the phone
+  Needs HTTPS (or localhost). Nothing leaves the phone unless you share it.
+-->
+<style>
+/* Jost is bundled (fonts/, SIL Open Font License) so the app works offline */
+@font-face{font-family:"Jost";font-style:normal;font-weight:100 900;font-display:swap;src:url(fonts/jost-latin-ext.woff2) format("woff2");
+  unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C4,U+2113,U+2C60-2C7F,U+A720-A7FF}
+@font-face{font-family:"Jost";font-style:normal;font-weight:100 900;font-display:swap;src:url(fonts/jost-latin.woff2) format("woff2");
+  unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+@font-face{font-family:"Jost";font-style:italic;font-weight:100 900;font-display:swap;src:url(fonts/jost-latin-ext-italic.woff2) format("woff2");
+  unicode-range:U+0100-02BA,U+02BD-02C5,U+02C7-02CC,U+02CE-02D7,U+02DD-02FF,U+0304,U+0308,U+0329,U+1D00-1DBF,U+1E00-1E9F,U+1EF2-1EFF,U+2020,U+20A0-20AB,U+20AD-20C4,U+2113,U+2C60-2C7F,U+A720-A7FF}
+@font-face{font-family:"Jost";font-style:italic;font-weight:100 900;font-display:swap;src:url(fonts/jost-latin-italic.woff2) format("woff2");
+  unicode-range:U+0000-00FF,U+0131,U+0152-0153,U+02BB-02BC,U+02C6,U+02DA,U+02DC,U+0304,U+0308,U+0329,U+2000-206F,U+20AC,U+2122,U+2191,U+2193,U+2212,U+2215,U+FEFF,U+FFFD}
+:root{
+  --ink:#0b0b0b; --ink-2:#151515; --paper:#ffffff; --red:#e3120b;
+  --muted:rgba(255,255,255,.62); --faint:rgba(255,255,255,.5);
+  --line:rgba(255,255,255,.16); --line-2:rgba(255,255,255,.34);
+  --font:"Jost",Futura,"Century Gothic","Avenir Next",system-ui,sans-serif;
+  --mono:ui-monospace,"Roboto Mono","SFMono-Regular",Menlo,monospace;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--ink);color:var(--paper);font-family:var(--font);-webkit-text-size-adjust:100%}
+body{padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);min-height:100dvh}
+button,select,input{font:inherit;color:inherit}
+button{cursor:pointer;-webkit-tap-highlight-color:transparent}
+.wrap{max-width:560px;margin:0 auto;padding-bottom:40px}
+[hidden]{display:none!important}
+
+/* Kruger bar: white bold oblique caps on red */
+.kr{background:var(--red);color:#fff;font-style:italic;font-weight:800;text-transform:uppercase;letter-spacing:-.01em;line-height:1}
+
+.top{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 16px}
+.brand{font-weight:700;font-size:13px;letter-spacing:.07em;text-transform:uppercase}
+.title{font-size:15px;padding:7px 10px 6px}
+
+/* Viewfinder */
+.finder{position:relative;margin:0 16px;height:min(46vh,430px);min-height:260px;transition:height .2s ease;background:#000;display:grid;place-items:center;overflow:hidden;touch-action:manipulation;user-select:none}
+#view{display:block}
+/* Start screen (camera off): 20% of the block's height added above and below. The live
+   viewfinder keeps the normal height so the EV reading stays clear of the bottom bar. */
+.finder.idle{height:calc(min(46vh,430px) * 1.4);min-height:364px}
+#video{position:absolute;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none}
+.chips{position:absolute;display:flex;gap:6px;flex-wrap:wrap;pointer-events:none;max-width:calc(100% - 20px)}
+.chips.tl{left:10px;top:10px}
+.chips.tr{right:10px;top:10px;justify-content:flex-end}
+.chip{font-size:12px;padding:5px 7px 4px;font-weight:700;font-style:italic;text-transform:uppercase;line-height:1;background:#000;color:#fff;border:1px solid #fff}
+.chip.red{background:var(--red);border-color:var(--red)}
+.chip.white{background:#fff;color:#000}
+.start{position:absolute;inset:0;z-index:2;display:flex;flex-direction:column;align-items:flex-start;justify-content:center;gap:6px;padding:16px 20px calc(var(--forbar-h, 48px) + 12px);background:#000}
+.start .kr{font-size:clamp(22px,7vw,38px);padding:4px 10px 3px}
+.start p{margin:10px 0 4px;color:var(--muted);font-size:14px;max-width:34ch;line-height:1.4}
+.start .err{color:#fff;background:var(--red);padding:8px 10px;font-weight:500}
+
+/* Readout */
+.readout{display:grid;grid-template-columns:auto 1fr;gap:12px;padding:12px 16px 10px;align-items:stretch}
+.ev{border:0;padding:10px 14px 9px 12px;min-width:148px;text-align:left;display:flex;flex-direction:column;justify-content:space-between;gap:4px}
+.ev-label{font-size:13px}
+.ev-num{font-size:58px;font-variant-numeric:tabular-nums;line-height:.86;letter-spacing:-.03em}
+.ev-hint{font-size:11px;font-style:normal;font-weight:500;opacity:.9;letter-spacing:.02em}
+.ev[aria-pressed="true"]{background:#fff;color:var(--red)}
+.side{display:flex;flex-direction:column;justify-content:space-between;gap:8px;min-width:0}
+.pair-big{display:flex;align-items:center;gap:6px;font-size:clamp(22px,6.2vw,30px);font-weight:700;font-style:italic;line-height:1;white-space:nowrap}
+.tok{border:0;background:none;color:inherit;font:inherit;padding:2px 0;border-bottom:2px dotted rgba(255,255,255,.5);display:inline-flex;align-items:center;gap:4px;line-height:1}
+.tok[aria-pressed="true"]{background:#fff;color:#000;border-bottom-color:#fff;padding:2px 6px}
+.tok:disabled{border-bottom-color:transparent;cursor:default}
+.lk{flex:none}
+.locknote{font-size:13px;color:var(--muted);line-height:1.3;margin-top:3px}
+.locknote .warn{color:#fff;background:var(--red);padding:1px 5px;font-weight:600}
+.side .sub{font-size:14px;color:var(--muted);line-height:1.3}
+.seg{display:flex;border:2px solid #fff}
+.seg button{flex:1;border:0;background:none;padding:7px 6px 6px;font-weight:700;font-style:italic;text-transform:uppercase;font-size:13px}
+.seg button[aria-pressed="true"]{background:#fff;color:#000}
+.seg button:disabled{color:var(--faint);text-decoration:line-through;cursor:not-allowed}
+
+/* Rulers */
+.ruler{position:relative;padding:8px 0 4px;border-top:1px solid var(--line)}
+.ruler-head{display:flex;justify-content:space-between;align-items:baseline;padding:0 16px 2px}
+.ruler-label{font-size:12px;letter-spacing:.08em;color:var(--muted);text-transform:uppercase;font-weight:500}
+.ruler-value{font-size:20px;font-weight:700;font-style:italic}
+.ruler-trackwrap{position:relative}
+.ruler-trackwrap::after{content:"";position:absolute;left:50%;top:0;height:24px;width:3px;margin-left:-1.5px;background:var(--red);pointer-events:none}
+.ruler-track{overflow-x:auto;scroll-snap-type:x mandatory;scrollbar-width:none;outline:none;overscroll-behavior-x:contain;
+  -webkit-mask-image:linear-gradient(90deg,transparent,#000 18%,#000 82%,transparent);mask-image:linear-gradient(90deg,transparent,#000 18%,#000 82%,transparent)}
+.ruler-track::-webkit-scrollbar{display:none}
+.ruler-track:focus-visible{outline:2px solid #fff;outline-offset:-2px}
+.ruler-inner{display:flex;padding:0 calc(50% - 14px);width:max-content}
+.tick{flex:0 0 28px;height:38px;scroll-snap-align:center;position:relative}
+.tick::before{content:"";position:absolute;left:50%;top:4px;width:1px;height:12px;background:var(--line-2)}
+.tick.major::before{top:0;height:20px;width:2px;margin-left:-1px;background:#fff}
+.tick span{position:absolute;top:23px;left:50%;transform:translateX(-50%);font-size:11px;color:var(--muted);white-space:nowrap}
+
+/* Tabs */
+.tabs{position:sticky;top:0;z-index:5;display:flex;background:var(--ink);border-top:1px solid var(--line);border-bottom:1px solid var(--line);overflow-x:auto;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{flex:1 0 auto;border:0;background:none;padding:13px 12px 12px;font-weight:700;font-style:italic;text-transform:uppercase;font-size:13px;color:var(--muted)}
+.tab[aria-selected="true"]{background:var(--red);color:#fff}
+.panel{padding:16px}
+.panel h2{margin:0 0 6px;font-size:22px;font-style:italic;font-weight:800;text-transform:uppercase;letter-spacing:-.01em}
+.panel p,.panel li{color:var(--muted);font-size:15px;line-height:1.45}
+.panel p{margin:6px 0 12px}
+.panel strong{color:#fff;font-weight:600}
+
+/* Pairs */
+.pairs{margin-top:8px}
+.prow{display:grid;grid-template-columns:1fr 44px 1fr;width:100%;height:40px;align-items:stretch;font-size:22px;font-variant-numeric:tabular-nums}
+.prow button{border:0;background:none;color:inherit;font:inherit;padding:0;display:flex;align-items:center;gap:6px}
+.prow .pa{justify-content:flex-end;padding-right:12px}
+.prow .ps{justify-content:flex-start;padding-left:12px}
+.prow .ps:disabled{cursor:default}
+.prow .pm{position:relative;height:100%}
+.prow .pm::before{content:"";position:absolute;left:50%;top:0;bottom:0;width:2px;margin-left:-1px;background:#fff}
+.prow .pm::after{content:"";position:absolute;left:0;right:0;top:50%;height:2px;margin-top:-1px;background:#fff}
+.prow.sel{background:var(--red);font-weight:700;font-style:italic}
+.prow.out{color:var(--faint)}
+.note{font-size:13px;color:var(--muted);margin-top:10px}
+.note.red{display:inline-block;color:#fff;background:var(--red);padding:4px 8px;font-weight:600}
+
+/* Formula */
+.formula{font-family:var(--mono);font-size:13px;line-height:1.55;background:#000;border:1px solid var(--line);padding:12px;overflow-x:auto;white-space:pre;color:#fff;margin:10px 0}
+dl.vars{display:grid;grid-template-columns:auto 1fr;gap:4px 12px;margin:10px 0;font-size:14px}
+dl.vars dt{font-family:var(--mono);color:#fff}
+dl.vars dd{margin:0;color:var(--muted)}
+
+/* Cards, buttons, forms */
+.card{border:1px solid var(--line-2);padding:14px;margin:0 0 14px}
+.card h3{margin:0 0 8px;font-size:17px;font-weight:800;font-style:italic;text-transform:uppercase;display:flex;align-items:center;gap:8px}
+.card h3 .n{background:#fff;color:#000;font-style:normal;font-size:13px;width:22px;height:22px;display:inline-grid;place-items:center;flex:none}
+.btns{display:flex;flex-wrap:wrap;gap:8px;margin-top:10px}
+.btn{border:2px solid #fff;background:none;padding:10px 14px 9px;font-weight:700;font-style:italic;text-transform:uppercase;font-size:14px;line-height:1}
+.btn.white{background:#fff;color:#000}
+.btn.red{background:var(--red);border-color:var(--red);color:#fff}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.status{font-size:14px;color:#fff;margin-top:8px;min-height:1.2em}
+.badge{display:inline-block;font-size:12px;font-weight:800;font-style:italic;text-transform:uppercase;padding:4px 6px 3px;line-height:1;border:1px solid #fff;white-space:nowrap}
+.badge.ok{background:#fff;color:#000}
+.badge.bad{background:var(--red);border-color:var(--red);color:#fff}
+.badge.warn{background:none;color:#fff}
+.badge.idle{background:none;color:var(--faint);border-color:var(--faint)}
+table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums;margin-top:8px}
+th,td{text-align:right;padding:5px 4px;border-bottom:1px solid var(--line)}
+th{color:var(--muted);font-weight:500;font-size:12px}
+th:first-child,td:first-child{text-align:left}
+.kv{display:grid;grid-template-columns:auto 1fr;gap:6px 12px;font-size:14px;margin:6px 0 0}
+.kv dt{color:var(--muted)}
+.kv dd{margin:0;text-align:right;font-variant-numeric:tabular-nums;word-break:break-word}
+.verdict li{display:flex;justify-content:space-between;gap:10px;align-items:center;padding:7px 0;border-bottom:1px solid var(--line);color:#fff;list-style:none}
+.verdict{padding:0;margin:4px 0 8px}
+.overall{font-size:18px;font-weight:700;font-style:italic;line-height:1.25;margin:10px 0 4px;color:#fff}
+label.field{display:block;margin:0 0 14px}
+label.field span{display:block;font-size:13px;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.06em;font-weight:500}
+label.field small{display:block;font-size:13px;color:var(--faint);margin-top:5px;line-height:1.4}
+select,input[type=number]{width:100%;background:#000;border:1px solid var(--line-2);padding:11px 10px;font-size:16px;border-radius:0}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+details{margin-top:12px}
+summary{cursor:pointer;color:var(--muted);font-size:14px}
+pre.log{font-family:var(--mono);font-size:12px;white-space:pre-wrap;color:var(--muted);max-height:240px;overflow:auto;background:#000;padding:10px;border:1px solid var(--line)}
+textarea{width:100%;height:160px;background:#000;color:#fff;border:1px solid var(--line-2);font-family:var(--mono);font-size:11px;margin-top:8px}
+.x{border:0;background:none;color:var(--muted);font-size:18px;padding:0 4px}
+
+/* Metering-for strip at the bottom of the viewfinder (collapsible) */
+.forbar{position:absolute;left:0;right:0;bottom:0;z-index:3;background:rgba(0,0,0,.88);border-top:1px solid var(--line-2)}
+.for-toggle{width:100%;display:flex;align-items:center;gap:8px;border:0;background:none;padding:12px 12px 11px;text-align:left}
+.for-label{font-size:12px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:500;flex:none}
+.for-name{font-size:12px;letter-spacing:.04em;font-weight:800;font-style:italic;text-transform:uppercase;color:#fff;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.for-fmt{font-size:11px;font-weight:700;font-style:italic;text-transform:uppercase;background:#fff;color:#000;padding:2px 5px 1px;flex:none}
+.for-chev{margin-left:auto;flex:none;width:9px;height:9px;border-right:2px solid #fff;border-bottom:2px solid #fff;transform:translateY(2px) rotate(-135deg);transition:transform .15s}
+.for-toggle[aria-expanded="true"] .for-chev{transform:translateY(-2px) rotate(45deg)}
+.for-more{padding:0 12px 12px}
+.for-roll{font-size:14px;color:var(--muted);line-height:1.3}
+.for-roll b{color:#fff;font-weight:600}
+.for-roll .warn{color:#fff;background:var(--red);padding:1px 5px;font-weight:600}
+.phone-cam{font-size:12px;color:var(--faint);margin-top:4px}
+.for-act{margin-top:10px;font-size:13px;padding:8px 11px 7px}
+input[type=text]{width:100%;background:#000;border:1px solid var(--line-2);padding:11px 10px;font-size:16px;border-radius:0}
+
+/* Explanations over the viewfinder */
+.explain{position:absolute;left:10px;right:10px;bottom:calc(var(--forbar-h, 0px) + 8px);z-index:4;background:rgba(0,0,0,.9);border:1px solid #fff;padding:12px 12px 10px;cursor:pointer}
+.explain .kr{display:inline-block;font-size:16px;padding:5px 8px 4px}
+.explain p{margin:8px 0 0;font-size:14px;line-height:1.4;color:#fff}
+.finder.flash::after{content:"";position:absolute;inset:0;background:#fff;pointer-events:none;animation:flash .3s ease-out forwards}
+@keyframes flash{from{opacity:.9}to{opacity:0}}
+
+/* Bottom action bar */
+.wrap{padding-bottom:130px}
+.actionbar{position:fixed;left:0;right:0;bottom:0;z-index:10;max-width:560px;margin:0 auto;display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;
+  padding:10px 16px calc(10px + env(safe-area-inset-bottom));background:var(--ink);border-top:1px solid var(--line)}
+.act{border:2px solid #fff;background:none;padding:7px 10px 6px;display:flex;flex-direction:column;align-items:flex-start;justify-self:start;min-width:92px;line-height:1}
+.act:last-child{justify-self:end;align-items:flex-end}
+.act-k{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:500}
+.act-v{font-size:18px;font-weight:800;font-style:italic;text-transform:uppercase;margin-top:3px}
+.act[aria-pressed="true"]{background:#fff;color:#000}
+.act[aria-pressed="true"] .act-k{color:rgba(0,0,0,.6)}
+.shoot{width:72px;height:72px;margin:7px;border-radius:50%;border:0;background:var(--red);box-shadow:0 0 0 4px var(--ink),0 0 0 7px #fff;transition:transform .08s}
+.shoot:active{transform:scale(.93)}
+.shoot:disabled{opacity:.35;cursor:not-allowed}
+
+/* Shots */
+.shot{display:grid;grid-template-columns:88px 1fr auto;gap:12px;padding:10px 0;border-bottom:1px solid var(--line);align-items:start}
+.shot img{width:88px;height:88px;object-fit:cover;background:#000;display:block}
+.s-top{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.s-pair{font-size:22px;font-weight:700;font-style:italic;line-height:1.1;margin:3px 0}
+.s-meta{font-size:13px;color:var(--muted);line-height:1.35}
+.s-notes{font-size:14px;color:#fff;line-height:1.35;margin-top:4px;white-space:pre-wrap;overflow-wrap:anywhere}
+
+/* Bottom sheet */
+dialog.sheet{position:fixed;inset:auto 0 0 0;margin:0 auto;width:100%;max-width:560px;max-height:90dvh;padding:0;border:0;border-top:4px solid var(--red);background:var(--ink);color:#fff;overflow:hidden;display:flex;flex-direction:column}
+dialog.sheet:not([open]){display:none}
+dialog.sheet::backdrop{background:rgba(0,0,0,.7)}
+.sheet-head{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:14px 16px 10px;border-bottom:1px solid var(--line)}
+.sheet-head .kr{font-size:18px;padding:6px 9px 5px}
+.sheet-head .x{font-size:28px;color:#fff;line-height:1}
+.sheet-body{padding:14px 16px calc(18px + env(safe-area-inset-bottom));overflow-y:auto}
+.sheet-body h3{margin:18px 0 8px;font-size:15px;font-weight:800;font-style:italic;text-transform:uppercase}
+textarea.notes{width:100%;min-height:110px;background:#000;color:#fff;border:1px solid var(--line-2);padding:10px;font:inherit;font-size:16px;line-height:1.4;resize:vertical;border-radius:0}
+label.check{display:flex;gap:10px;align-items:flex-start;font-size:15px;color:#fff;margin:12px 0;line-height:1.35}
+label.check input{width:22px;height:22px;accent-color:var(--red);flex:none;margin:0}
+label.check small{display:block;color:var(--faint);font-size:13px;margin-top:2px}
+.field.plain span.lbl{display:block;font-size:13px;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.06em;font-weight:500}
+.stepper{display:grid;grid-template-columns:44px 1fr 44px;border:1px solid var(--line-2)}
+.stepper button{border:0;background:#000;font-size:22px;font-weight:700;color:#fff}
+.stepper input{border:0;border-left:1px solid var(--line-2);border-right:1px solid var(--line-2);text-align:center;width:100%}
+.meterline{display:grid;grid-template-columns:72px 1fr;gap:12px;align-items:center;margin-bottom:12px}
+.meterline img{width:72px;height:72px;object-fit:cover;background:#000;display:block}
+.diff{font-size:14px;margin:-6px 0 14px;color:var(--muted)}
+.diff.off{color:#fff}
+.locline{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:14px;color:#fff;margin-bottom:14px}
+.locline a{color:#fff}
+.linkbtn{border:0;background:none;padding:0;color:#fff;text-decoration:underline;font-size:14px}
+.pick{display:block;width:100%;text-align:left;border:1px solid var(--line-2);background:none;padding:12px;margin:0 0 8px}
+.pick[aria-current="true"]{border:2px solid var(--red);background:rgba(227,18,11,.12)}
+.pick b{display:block;font-size:18px;font-style:italic;font-weight:800;text-transform:uppercase}
+.pick span{display:block;font-size:14px;color:var(--muted);margin-top:3px}
+
+/* Logbook & gear */
+.roll{border:1px solid var(--line-2);margin:0 0 16px}
+.roll-head{padding:12px}
+.roll-head b{font-size:19px;font-style:italic;font-weight:800;text-transform:uppercase;display:block;line-height:1.1}
+.roll-head .sub{font-size:14px;color:var(--muted);margin-top:4px}
+.roll-head .cur{color:#fff;font-weight:600}
+.rstat{display:inline-block;font-size:11px;font-weight:800;font-style:italic;text-transform:uppercase;padding:3px 6px 2px;border:1px solid #fff;margin-left:6px;vertical-align:2px}
+.rstat.loaded{background:var(--red);border-color:var(--red)}
+.rstat.developed{background:#fff;color:#000}
+.roll-acts{display:flex;flex-wrap:wrap;gap:6px;padding:0 12px 12px}
+.roll-acts .btn{font-size:12px;padding:7px 9px 6px}
+.frame{display:grid;grid-template-columns:64px 1fr;gap:12px;width:100%;text-align:left;border:0;border-top:1px solid var(--line);background:none;padding:10px 12px}
+.frame img{width:64px;height:64px;object-fit:cover;background:#000;display:block}
+.frame .fn{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.frame .fp{font-size:18px;font-weight:700;font-style:italic;line-height:1.15}
+.gear{border:1px solid var(--line-2);padding:12px;margin:0 0 10px;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:start}
+.gear b{font-size:18px;font-style:italic;font-weight:800;text-transform:uppercase;display:block;line-height:1.1}
+.gear .sub{font-size:14px;color:var(--muted);margin-top:4px;line-height:1.35}
+.lenschips{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0 4px}
+.lenschip{font-size:13px;border:1px solid #fff;padding:4px 7px 3px;display:inline-flex;gap:6px;align-items:center}
+.lenschip button{border:0;background:none;color:var(--muted);font-size:16px;padding:0;line-height:1}
+.empty{color:var(--muted);font-size:15px;border:1px dashed var(--line-2);padding:14px;margin-bottom:12px}
+</style>
+<!-- Privacy-friendly analytics by Plausible --><script async src="https://stats.jarrydwafer.com/js/pa-zZ-saqqA_-9LI3XSY9P82.js"></script><script>window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
+/* The installed app is served from https://localhost, which Plausible ignores unless told otherwise. */
+plausible.init(window.Capacitor&&Capacitor.isNativePlatform&&Capacitor.isNativePlatform()?{captureOnLocalhost:true,customProperties:{app:Capacitor.getPlatform()}}:{})</script></head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <div class="brand">SwissArmyPhotoKnife</div>
+  <div class="kr title">Light meter</div>
+</header>
+
+<section class="finder idle" id="finder" aria-label="Viewfinder">
+  <canvas id="view" aria-label="Metered area preview. Tap a grid cell to spot meter it."></canvas>
+  <video id="video" playsinline muted></video>
+  <div class="explain" id="explain" hidden role="status"><span class="kr" id="explainTitle"></span><p id="explainText"></p></div>
+  <div class="chips tl"><span class="chip red" id="chipLens">50mm · 35mm</span><span class="chip red" id="chipWarn" hidden></span><span class="chip white" id="chipWide" hidden>Lens wider than phone · full view</span></div>
+  <div class="chips tr"><span class="chip" id="chipMode">—</span><span class="chip" id="chipSpot">Average</span></div>
+  <div class="start" id="startPane">
+    <span class="kr">What you see</span>
+    <span class="kr">is not what</span>
+    <span class="kr">the film sees</span>
+    <p id="startMsg">Tests what Chrome lets this page do with your camera. Nothing leaves your phone unless you share it.</p>
+    <button class="btn white" id="btnStart">Start camera</button>
+  </div>
+  <div class="forbar" id="forbar">
+    <button class="for-toggle" id="btnFor" aria-expanded="false" aria-controls="forMore">
+      <span class="for-label">Metering for</span>
+      <span class="for-name" id="forName">No camera selected</span>
+      <span class="for-fmt" id="forFmt">35mm</span>
+      <span class="for-chev" aria-hidden="true"></span>
+    </button>
+    <div class="for-more" id="forMore" hidden>
+      <div class="for-roll" id="forRoll">No roll loaded</div>
+      <div class="phone-cam" id="phoneCam">Phone camera off</div>
+      <button class="btn white for-act" id="btnRolls">Load a roll</button>
+    </div>
+  </div>
+</section>
+
+<section class="readout">
+  <button class="ev kr" id="btnHold" aria-pressed="false" aria-label="Exposure value. Tap to hold the reading.">
+    <span class="ev-label">EV<sub>100</sub></span>
+    <span class="ev-num" id="evNum">—</span>
+    <span class="ev-hint" id="evHint">Tap to hold</span>
+  </button>
+  <div class="side">
+    <div>
+      <div class="pair-big" id="pairBig"><button class="tok" id="tokAp" aria-pressed="false" disabled>f/—</button><span aria-hidden="true">·</span><button class="tok" id="tokSh" aria-pressed="false" disabled>—</button></div>
+      <div class="sub" id="evIso">Waiting for a reading</div>
+      <div class="locknote" id="lockNote"></div>
+    </div>
+    <div class="seg" role="group" aria-label="Metering mode">
+      <button id="modeLocked" aria-pressed="false">Locked</button>
+      <button id="modeAuto" aria-pressed="false">Auto</button>
+    </div>
+  </div>
+</section>
+
+<section class="ruler" id="rulerIso">
+  <div class="ruler-head"><span class="ruler-label">Film ISO</span><span class="ruler-value">400</span></div>
+  <div class="ruler-trackwrap"><div class="ruler-track" tabindex="0" role="slider" aria-label="Film ISO"><div class="ruler-inner"></div></div></div>
+</section>
+<section class="ruler" id="rulerLens">
+  <div class="ruler-head"><span class="ruler-label">Lens</span><span class="ruler-value">50mm</span></div>
+  <div class="ruler-trackwrap"><div class="ruler-track" tabindex="0" role="slider" aria-label="Lens focal length"><div class="ruler-inner"></div></div></div>
+</section>
+
+<nav class="tabs" role="tablist">
+  <button class="tab" role="tab" aria-selected="true" aria-controls="pPairs" id="tPairs">Pairs</button>
+  <button class="tab" role="tab" aria-selected="false" aria-controls="pShots" id="tShots">Logbook</button>
+  <button class="tab" role="tab" aria-selected="false" aria-controls="pGear" id="tGear">Gear</button>
+  <button class="tab" role="tab" aria-selected="false" aria-controls="pFormula" id="tFormula">Formula</button>
+  <button class="tab" role="tab" aria-selected="false" aria-controls="pTests" id="tTests">Tests</button>
+  <button class="tab" role="tab" aria-selected="false" aria-controls="pCal" id="tCal">Calibrate</button>
+  <button class="tab" role="tab" aria-selected="false" aria-controls="pSetup" id="tSetup">Setup</button>
+</nav>
+
+<main>
+  <!-- PAIRS -->
+  <section class="panel" id="pPairs" role="tabpanel">
+    <div class="pairs" id="pairs"></div>
+    <div id="pairNote" class="note"></div>
+    <p class="note">The red row is what the meter suggests. Tap an aperture to lock it, or a speed to lock that instead. Tap the locked one again to release it.</p>
+  </section>
+
+  <!-- LOGBOOK -->
+  <section class="panel" id="pShots" role="tabpanel" hidden>
+    <h2>Logbook</h2>
+    <p>Every tap of the red circle saves the metered frame to the roll you're metering for. Tap a frame to edit its notes. Everything stays on this phone until the app has accounts and sync.</p>
+    <div id="shotList"></div>
+    <div class="btns"><button class="btn white" id="btnLoadRoll2">Load a roll</button><button class="btn" id="btnExport">Download logbook</button></div>
+  </section>
+
+  <!-- GEAR -->
+  <section class="panel" id="pGear" role="tabpanel" hidden>
+    <h2>My cameras</h2>
+    <div id="camList"></div>
+    <div class="btns"><button class="btn white" id="btnAddCam">Add camera</button></div>
+    <h2 style="margin-top:30px">My films</h2>
+    <p id="filmIntro"></p>
+    <div id="filmList"></div>
+    <div class="btns"><button class="btn" id="btnAddFilm">Add film</button></div>
+  </section>
+
+  <!-- FORMULA -->
+  <section class="panel" id="pFormula" role="tabpanel" hidden>
+    <h2>How this was measured</h2>
+    <p>The phone's lens has a fixed aperture. With the exposure locked, the page knows exactly how much light the sensor was given, so the brightness of the metered area tells it how bright the scene is.</p>
+    <div class="formula" id="formula">Waiting for a reading…</div>
+    <dl class="vars">
+      <dt>N</dt><dd>Phone lens aperture (fixed, set in Setup)</dd>
+      <dt>t</dt><dd>Phone shutter time in seconds, as the camera reports it</dd>
+      <dt>S</dt><dd>Phone ISO, as the camera reports it</dd>
+      <dt>Y</dt><dd>Average brightness of the metered area, converted back to linear light (0–1)</dd>
+      <dt>0.18</dt><dd>Mid-grey: a meter assumes the scene averages out to 18% grey</dd>
+      <dt>k</dt><dd>Response slope from the linearity test (1 = perfectly linear)</dd>
+      <dt>C</dt><dd>Calibration offset against your camera's meter</dd>
+    </dl>
+    <p>Then for your film: <strong>EV = EV<sub>100</sub> + log₂(ISO/100)</strong> and for each aperture <strong>t = N² / 2<sup>EV</sup></strong>.</p>
+  </section>
+
+  <!-- TESTS -->
+  <section class="panel" id="pTests" role="tabpanel" hidden>
+    <h2>What we're finding out</h2>
+    <p>Can Chrome lock the exposure? Does brightness follow the exposure? Does it report live auto-exposure values? How far off is it from a real meter? Run 2 and 3, do a few calibration points, then share the report.</p>
+
+    <div class="card">
+      <h3><span class="n">1</span> Camera &amp; controls <span class="badge idle" id="b1">Not run</span></h3>
+      <dl class="kv" id="capsList"><dt>Status</dt><dd>Start the camera first</dd></dl>
+      <div class="btns"><button class="btn" id="btnScan" disabled>Scan all cameras</button></div>
+      <div class="status" id="scanStatus"></div>
+      <div id="scanOut"></div>
+    </div>
+
+    <div class="card">
+      <h3><span class="n">2</span> Exposure lock <span class="badge idle" id="b2">Not run</span></h3>
+      <p>Fill the view with an evenly lit, plain surface (a wall, a grey card, a sheet of paper in shade). Hold still. The page steps the shutter, then the ISO, and checks that brightness follows: one stop more light should double it.</p>
+      <div class="btns"><button class="btn white" id="btnSweep" disabled>Run (≈15 s)</button><button class="btn" id="btnUseK" hidden>Use measured slope</button></div>
+      <div class="status" id="sweepStatus"></div>
+      <div id="sweepOut"></div>
+    </div>
+
+    <div class="card">
+      <h3><span class="n">3</span> Live auto-exposure <span class="badge idle" id="b3">Not run</span></h3>
+      <p>Switches to auto exposure for 10 seconds. During that time, point at a bright window, then at a dark corner, then back. The page checks whether Chrome reports the shutter and ISO the camera picks.</p>
+      <div class="btns"><button class="btn white" id="btnAE" disabled>Run (10 s)</button></div>
+      <div class="status" id="aeStatus"></div>
+      <div id="aeOut"></div>
+    </div>
+
+    <div class="card">
+      <h3><span class="n">4</span> Calibration <span class="badge idle" id="b4">No points</span></h3>
+      <p>Done in the Calibrate tab against your metered camera.</p>
+    </div>
+
+    <div class="card">
+      <h3>Report</h3>
+      <ul class="verdict" id="verdict"></ul>
+      <div class="overall" id="overall"></div>
+      <div class="btns">
+        <button class="btn red" id="btnShare">Share report</button>
+        <button class="btn" id="btnCopy">Copy</button>
+        <button class="btn" id="btnDownload">Download</button>
+      </div>
+      <div class="status" id="reportStatus"></div>
+      <textarea id="reportText" hidden readonly></textarea>
+      <details><summary>Log</summary><pre class="log" id="log"></pre></details>
+    </div>
+  </section>
+
+  <!-- CALIBRATE -->
+  <section class="panel" id="pCal" role="tabpanel" hidden>
+    <h2>Calibrate</h2>
+    <p><strong>1 · Exposure.</strong> Point the phone and your camera at the same evenly lit, plain surface, filling both views. Set the same ISO and lens here as on the camera. Enter the camera's aperture and shutter, and what its meter shows at those settings (on a Sony in M mode, the M.M. number; 0.0 if it's centred).</p>
+    <div class="row2">
+      <label class="field"><span>Aperture</span><select id="calAp"></select></label>
+      <label class="field"><span>Shutter</span><select id="calSh"></select></label>
+    </div>
+    <label class="field"><span>Camera meter shows</span><select id="calDev"></select></label>
+    <div class="note" id="calIsoNote"></div>
+    <div class="btns"><button class="btn white" id="btnCalRec" disabled>Record point</button></div>
+    <div class="status" id="calStatus"></div>
+    <p>Repeat in bright sun, open shade and indoors. If the offset stays the same at every brightness, one number calibrates the meter.</p>
+    <div id="calOut"></div>
+    <div class="btns"><button class="btn red" id="btnCalApply" hidden>Apply average offset</button><button class="btn" id="btnCalClear" hidden>Clear points</button></div>
+
+    <p style="margin-top:22px"><strong>2 · Framing.</strong> Compare the preview with your camera's viewfinder at the same lens. If the preview shows more or less than the viewfinder, adjust the phone's focal length in Setup until they match. That makes the metered area match what the lens sees.</p>
+  </section>
+
+  <!-- SETUP -->
+  <section class="panel" id="pSetup" role="tabpanel" hidden>
+    <h2>Setup</h2>
+    <label class="field"><span>Phone camera</span><select id="selCam"><option>Start the camera first</option></select>
+      <small>Chrome lists each camera it can open. The main back camera is usually the first “facing back”.</small></label>
+    <div class="row2">
+      <label class="field"><span>Phone aperture N</span><input type="number" id="inN" step="0.1" min="0.8" max="8" inputmode="decimal"></label>
+      <label class="field"><span>Phone focal (35mm eq.)</span><input type="number" id="inEq" step="0.5" min="10" max="120" inputmode="decimal"></label>
+    </div>
+    <small style="display:block;color:var(--faint);font-size:13px;margin:-6px 0 14px">Main back camera — Galaxy S24 / S26: f/1.8, about 23–24mm. S26 Ultra: f/1.4. The ultra-wide (about 13mm, f/2.2) shows a much wider view.</small>
+    <div class="row2">
+      <label class="field"><span>Response slope k</span><input type="number" id="inK" step="0.01" min="0.3" max="2" inputmode="decimal"></label>
+      <label class="field"><span>Offset C (stops)</span><input type="number" id="inC" step="0.1" min="-6" max="6" inputmode="decimal"></label>
+    </div>
+    <div class="btns"><button class="btn" id="btnResetCfg">Reset to defaults</button></div>
+    <h2 style="margin-top:28px">Logbook</h2>
+    <label class="check"><input type="checkbox" id="setNotes"> <span>Open the note sheet after every capture<small>Off: shots save quietly and you add notes later from the Logbook.</small></span></label>
+    <label class="check"><input type="checkbox" id="setLoc"> <span>Save location with each shot<small>Uses the phone's GPS. Stays on this phone.</small></span></label>
+  </section>
+</main>
+</div>
+
+<dialog class="sheet" id="sheet" aria-labelledby="sheetTitle">
+  <div class="sheet-head"><span class="kr" id="sheetTitle"></span><button class="x" id="sheetClose" aria-label="Close">×</button></div>
+  <div class="sheet-body" id="sheetBody"></div>
+</dialog>
+
+<nav class="actionbar" aria-label="Camera actions">
+  <button class="act" id="btnCam" aria-pressed="false"><span class="act-k">Camera</span><span class="act-v" id="camState">Off</span></button>
+  <button class="shoot" id="btnShoot" aria-label="Capture shot" disabled></button>
+  <button class="act" id="btnShots"><span class="act-k">Logbook</span><span class="act-v" id="shotCount">0</span></button>
+</nav>
+
+<script>
+'use strict';
+(() => {
+const VERSION = '0.6';
+// Installed app (Capacitor) or plain web page? The native bridge is injected before this script runs.
+const CAP = window.Capacitor;
+const NATIVE = !!(CAP && CAP.isNativePlatform && CAP.isNativePlatform());
+const Shell = NATIVE && CAP.Plugins ? CAP.Plugins.SapkShell : null;   // save file, share sheet, keep awake
+const track = (name, props) => { try { if (window.plausible) window.plausible(name, props ? { props } : undefined); } catch {} };
+const KEY = 'sapk.cameraTest.v1';
+const $ = (s, el = document) => el.querySelector(s);
+const log2 = Math.log2;
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+const avg = a => a.reduce((s, x) => s + x, 0) / (a.length || 1);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const sgn = (x, d = 2) => (x >= 0 ? '+' : '−') + Math.abs(x).toFixed(d);
+
+/* ================================================================
+   Metering core — pure functions, shared with the app later
+   ================================================================ */
+const FULL_DIAG = 43.267;            // 36×24mm diagonal
+const PHONE_LONG = FULL_DIAG * 0.8;  // long side of a 4:3 sensor, in 35mm-equivalent mm
+
+const Meter = {
+  // Scene brightness at ISO 100 from a locked (or reported) phone exposure
+  ev100({ N, t, S, Y, k = 1, C = 0 }) {
+    return log2(N * N / t) - log2(S / 100) + log2(Y / 0.18) / k + C;
+  },
+  terms({ N, t, S, Y, k = 1, C = 0 }) {
+    return { a: log2(N * N / t), b: -log2(S / 100), c: log2(Y / 0.18) / k, C };
+  },
+  evAtIso: (ev100, iso) => ev100 + log2(iso / 100),
+  // EV100 that a camera's settings correspond to (used for calibration)
+  ev100FromSettings: (N, t, iso) => log2(N * N / t) - log2(iso / 100),
+  equivFocal: (f, fmt) => f * FULL_DIAG / Math.hypot(fmt.w, fmt.h),
+  // Area of the phone frame your lens sees. Long sides are aligned.
+  crop(vw, vh, phoneEq, lensF, fmt) {
+    const longPx = Math.max(vw, vh), shortPx = Math.min(vw, vh), portrait = vh > vw;
+    const pxPerTan = longPx / (PHONE_LONG / phoneEq);
+    let cl = pxPerTan * Math.max(fmt.w, fmt.h) / lensF;
+    let cs = pxPerTan * Math.min(fmt.w, fmt.h) / lensF;
+    const fit = Math.min(1, longPx / cl, shortPx / cs);
+    const wide = fit < 0.999;
+    cl *= fit; cs *= fit;
+    const w = portrait ? cs : cl, h = portrait ? cl : cs;
+    return { x: (vw - w) / 2, y: (vh - h) / 2, w, h, wide, frac: (w * h) / (vw * vh) };
+  },
+};
+
+const FORMATS = {
+  '35':   { label: '35mm',       w: 36,   h: 24 },
+  'half': { label: 'Half frame', w: 24,   h: 18 },
+  '645':  { label: '6×4.5',      w: 56,   h: 41.5 },
+  '66':   { label: '6×6',        w: 56,   h: 56 },
+  '67':   { label: '6×7',        w: 69.5, h: 56 },
+  '69':   { label: '6×9',        w: 84,   h: 56 },
+  '45':   { label: '4×5',        w: 121,  h: 97 },
+};
+const ISOS = [6,8,10,12,16,20,25,32,40,50,64,80,100,125,160,200,250,320,400,500,640,800,1000,1250,1600,2000,2500,3200,4000,5000,6400];
+const FOCALS = [10,12,14,15,16,17,18,20,21,24,25,28,30,35,38,40,45,50,55,58,60,65,70,75,80,85,90,100,105,110,120,127,135,150,165,180,200,210,250,300,400,500];
+const FOCAL_MAJOR = new Set([14,20,24,28,35,50,80,105,135,200,300,500]);
+const AP_THIRDS = ['1.0','1.1','1.2','1.4','1.6','1.8','2','2.2','2.5','2.8','3.2','3.5','4','4.5','5','5.6','6.3','7.1','8','9','10','11','13','14','16','18','20','22','25','29','32'];
+const AP_FULL = ['1','1.4','2','2.8','4','5.6','8','11','16','22','32','45','64'];
+// Third-stop shutter speeds as cameras mark them; value is 2^(k/3) seconds
+const SH_THIRDS_LABELS = ['1/8000','1/6400','1/5000','1/4000','1/3200','1/2500','1/2000','1/1600','1/1250','1/1000','1/800','1/640','1/500','1/400','1/320','1/250','1/200','1/160','1/125','1/100','1/80','1/60','1/50','1/40','1/30','1/25','1/20','1/15','1/13','1/10','1/8','1/6','1/5','1/4','1/3','0.4"','0.5"','0.6"','0.8"','1"','1.3"','1.6"','2"','2.5"','3.2"','4"','5"','6"','8"','10"','13"','15"','20"','25"','30"'];
+const SHUTTERS = SH_THIRDS_LABELS.map((l, i) => [i - 39, l]);
+// Camera meter deviation (e.g. Sony "M.M." scale), in thirds of a stop
+const METER_DEV = [-2, -5/3, -4/3, -1, -2/3, -1/3, 0, 1/3, 2/3, 1, 4/3, 5/3, 2];
+const fmtDev = v => (v > 0 ? '+' : v < 0 ? '−' : '') + (Math.round(Math.abs(v) * 10) / 10).toFixed(1);
+const NOM_INV = {1:'1',2:'2',4:'4',8:'8',16:'15',32:'30',64:'60',128:'125',256:'250',512:'500',1024:'1000',2048:'2000',4096:'4000',8192:'8000'};
+
+// Nominal marking for a full-stop shutter time (2^k seconds)
+function fmtShutterNominal(t) {
+  if (t >= 1) {
+    const s = Math.round(t);
+    if (s < 60) return s + 's';
+    const m = Math.floor(s / 60), r = s % 60;
+    return m + 'm' + (r ? ' ' + r + 's' : '');
+  }
+  const inv = Math.round(1 / t);
+  return '1/' + (NOM_INV[inv] || inv);
+}
+// Exact time, for diagnostics
+function fmtT(t) {
+  if (t == null || !isFinite(t)) return '—';
+  if (t >= 1) return t.toFixed(t < 10 ? 2 : 1) + 's';
+  return '1/' + Math.round(1 / t);
+}
+const fracWord = f => {
+  const a = Math.abs(f);
+  if (a < 0.17) return null;
+  return (a < 0.42 ? '⅓' : '½');
+};
+
+/* ================================================================
+   Config & persistence (this phone only)
+   ================================================================ */
+const DEFAULTS = { N: 1.8, phoneEq: 23, format: '35', iso: 400, focal: 50, k: 1, C: 0, prefI: 6, pairLock: 'none', lockK: -8, deviceId: null, calAp: 18, calSh3: -21, calDev: 0,
+                   aeLive: null, notesOnCapture: true, saveLoc: true, lastFilmId: 'kodak-portra-400' };
+const store = {
+  load() { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } },
+  save() { try { localStorage.setItem(KEY, JSON.stringify({ cfg, cal })); } catch {} },
+};
+const saved = store.load();
+const cfg = { ...DEFAULTS, ...(saved.cfg || {}) };
+delete cfg.calSh;   // v0.1 full-stop index, replaced by calSh3
+delete cfg.forName; // v0.2 free-text camera, replaced by the camera list
+delete cfg.forOpen; // v0.3.1 remembered the strip; it now always starts collapsed
+let cal = Array.isArray(saved.cal) ? saved.cal : [];
+
+/* ================================================================
+   Logbook data — kept on this phone for now. The shapes mirror the
+   PocketBase collections the app will sync to: cameras (with lenses),
+   films, rolls, shots.
+   ================================================================ */
+const FILMS_BUILTIN = [
+  ['kodak-portra-160', 'Kodak Portra 160', 160, 'colour'], ['kodak-portra-400', 'Kodak Portra 400', 400, 'colour'],
+  ['kodak-portra-800', 'Kodak Portra 800', 800, 'colour'], ['kodak-ektar-100', 'Kodak Ektar 100', 100, 'colour'],
+  ['kodak-gold-200', 'Kodak Gold 200', 200, 'colour'], ['kodak-ultramax-400', 'Kodak UltraMax 400', 400, 'colour'],
+  ['kodak-colorplus-200', 'Kodak ColorPlus 200', 200, 'colour'], ['fuji-200', 'Fujifilm 200', 200, 'colour'],
+  ['fuji-400', 'Fujifilm 400', 400, 'colour'], ['cinestill-50d', 'CineStill 50D', 50, 'colour'],
+  ['cinestill-400d', 'CineStill 400D', 400, 'colour'], ['cinestill-800t', 'CineStill 800T', 800, 'colour'],
+  ['lomo-cn-100', 'Lomography Color Negative 100', 100, 'colour'], ['lomo-cn-400', 'Lomography Color Negative 400', 400, 'colour'],
+  ['lomo-cn-800', 'Lomography Color Negative 800', 800, 'colour'], ['harman-phoenix-200', 'Harman Phoenix 200', 200, 'colour'],
+  ['kodak-e100', 'Kodak Ektachrome E100', 100, 'slide'], ['fuji-velvia-50', 'Fujifilm Velvia 50', 50, 'slide'],
+  ['fuji-velvia-100', 'Fujifilm Velvia 100', 100, 'slide'], ['fuji-provia-100f', 'Fujifilm Provia 100F', 100, 'slide'],
+  ['kodak-trix-400', 'Kodak Tri-X 400', 400, 'bw'], ['kodak-tmax-100', 'Kodak T-Max 100', 100, 'bw'],
+  ['kodak-tmax-400', 'Kodak T-Max 400', 400, 'bw'], ['kodak-tmax-p3200', 'Kodak T-Max P3200', 3200, 'bw'],
+  ['ilford-hp5', 'Ilford HP5 Plus', 400, 'bw'], ['ilford-fp4', 'Ilford FP4 Plus', 125, 'bw'],
+  ['ilford-panf', 'Ilford Pan F Plus', 50, 'bw'], ['ilford-delta-100', 'Ilford Delta 100', 100, 'bw'],
+  ['ilford-delta-400', 'Ilford Delta 400', 400, 'bw'], ['ilford-delta-3200', 'Ilford Delta 3200', 3200, 'bw'],
+  ['ilford-xp2', 'Ilford XP2 Super', 400, 'bw'], ['ilford-sfx', 'Ilford SFX 200', 200, 'bw'],
+  ['ilford-ortho', 'Ilford Ortho Plus', 80, 'bw'], ['kentmere-100', 'Kentmere Pan 100', 100, 'bw'],
+  ['kentmere-400', 'Kentmere Pan 400', 400, 'bw'], ['fuji-acros-100', 'Fujifilm Acros 100 II', 100, 'bw'],
+  ['foma-100', 'Fomapan 100', 100, 'bw'], ['foma-200', 'Fomapan 200', 200, 'bw'], ['foma-400', 'Fomapan 400', 400, 'bw'],
+  ['rollei-rpx-100', 'Rollei RPX 100', 100, 'bw'], ['rollei-rpx-400', 'Rollei RPX 400', 400, 'bw'],
+  ['rollei-retro-80s', 'Rollei Retro 80S', 80, 'bw'], ['lomo-berlin-400', 'Lomography Berlin Kino 400', 400, 'bw'],
+].map(([id, name, iso, type]) => ({ id, name, iso, type, builtin: true }));
+const FILM_TYPES = { colour: 'Colour negative', bw: 'Black & white', slide: 'Slide' };
+const EXPOSURES = { '35': 36, 'half': 72, '645': 15, '66': 12, '67': 10, '69': 8, '45': 10 };
+const ROLL_STATUS = { loaded: 'In camera', finished: 'Finished', developed: 'Developed' };
+
+const LB_KEY = 'sapk.logbook.v1';
+const lb = (() => {
+  const empty = { cameras: [], films: [], rolls: [], activeRollId: null };
+  try { const v = JSON.parse(localStorage.getItem(LB_KEY)); return v ? { ...empty, ...v } : empty; } catch { return empty; }
+})();
+function saveLB() { try { localStorage.setItem(LB_KEY, JSON.stringify(lb)); } catch (e) { logMsg('Logbook save failed: ' + e.name); } }
+const uid = () => (crypto.randomUUID ? crypto.randomUUID() : Date.now().toString(36) + Math.random().toString(36).slice(2));
+
+// Shots (with thumbnails) live in IndexedDB; v0.2 kept them in localStorage
+const OLD_SHOTS_KEY = 'sapk.cameraTest.shots.v1';
+let shots = [];
+const DB = (() => {
+  let dbp = null;
+  const open = () => dbp || (dbp = new Promise((res, rej) => {
+    const r = indexedDB.open('sapk', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('shots', { keyPath: 'id' });
+    r.onsuccess = () => res(r.result);
+    r.onerror = () => rej(r.error);
+  }));
+  const run = async (mode, fn) => {
+    const db = await open();
+    return new Promise((res, rej) => {
+      const t = db.transaction('shots', mode);
+      const req = fn(t.objectStore('shots'));
+      t.oncomplete = () => res(req && req.result);
+      t.onerror = t.onabort = () => rej(t.error);
+    });
+  };
+  return {
+    all: () => run('readonly', s => s.getAll()),
+    put: shot => run('readwrite', s => s.put(shot)),
+    del: id => run('readwrite', s => s.delete(id)),
+  };
+})();
+function persistShot(s) {
+  const { locPending, locError, ...keep } = s;   // transient UI state isn't stored
+  return DB.put(keep).catch(e => { logMsg('Shot save failed: ' + (e && e.name)); explain('Couldn\'t save', 'The phone refused to store this shot. Download the logbook to keep a copy.'); });
+}
+function removeShot(id) {
+  shots = shots.filter(s => String(s.id) !== String(id));
+  DB.del(id).catch(e => logMsg('Shot delete failed: ' + (e && e.name)));
+}
+
+/* ================================================================
+   Runtime state
+   ================================================================ */
+const st = {
+  stream: null, track: null, ic: null, caps: null, canLock: false, gen: 0,
+  mode: 'auto', cur: { t: null, S: null },
+  settleUntil: 0, applying: false, ly: null, region: null,
+  hold: false, heldEV: null, spot: null,
+  outCount: 0, lastRange: null, ineffective: 0, lockOK: null, limit: null,
+  testing: false, collectors: [], aeCollectors: [], aeTimer: null, aePolling: false,
+  aeLast: null, cameras: [], log: [], results: {}, crop: null,
+  frames: 0, fps: 0, fpsT0: 0, lastUI: 0, wake: null,
+};
+
+const video = $('#video');
+const view = $('#view');
+const vctx = view.getContext('2d');
+const samp = document.createElement('canvas');
+const sctx = samp.getContext('2d', { willReadFrequently: true });
+
+const LUT = new Float32Array(256);
+for (let i = 0; i < 256; i++) { const c = i / 255; LUT[i] = c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; }
+
+function logMsg(m) {
+  const line = new Date().toLocaleTimeString() + '  ' + m;
+  st.log.push(line);
+  if (st.log.length > 200) st.log.shift();
+  $('#log').textContent = st.log.join('\n');
+}
+function safeSettings() { try { return st.track ? st.track.getSettings() : {}; } catch { return {}; } }
+
+/* ================================================================
+   Camera
+   ================================================================ */
+async function startCamera(deviceId) {
+  stopStream();
+  // 30fps lets a locked exposure run to 1/30 s before ISO has to rise
+  const v = { width: { ideal: 1280 }, height: { ideal: 960 }, aspectRatio: { ideal: 4 / 3 }, frameRate: { ideal: 30 } };
+  if (deviceId) v.deviceId = { exact: deviceId }; else v.facingMode = { ideal: 'environment' };
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: v, audio: false });
+  } catch (e) {
+    if (deviceId) { logMsg('Could not open saved camera (' + e.name + '), trying default'); cfg.deviceId = null; return startCamera(null); }
+    throw e;
+  }
+  st.stream = stream;
+  st.track = stream.getVideoTracks()[0];
+  st.track.addEventListener('ended', () => logMsg('Camera track ended'));
+  video.srcObject = stream;
+  await video.play().catch(() => {});
+  st.ic = ('ImageCapture' in window) ? new ImageCapture(st.track) : null;
+  st.lockOK = null; st.ineffective = 0; st.lastRange = null; st.limit = null; st.ly = null;
+  readCaps();
+  await listCameras();
+  const s = safeSettings();
+  cfg.deviceId = s.deviceId || null; store.save();
+  logMsg(`Opened "${st.track.label}" ${s.width}×${s.height} @ ${s.frameRate || '?'}fps`);
+  $('#startPane').hidden = true;
+  const gen = ++st.gen;
+  loop(gen);
+  requestWake();
+  track('Camera started');
+  // Seed the lock from auto-exposure if Chrome reports it, then lock.
+  if (st.canLock) {
+    await setMode('auto');
+    await sleep(900);
+    await pollAE();
+    await setMode('locked');
+  } else {
+    await setMode('auto');
+  }
+  enableTests(true);
+  renderCaps();
+  renderVerdict();
+}
+
+function stopStream() {
+  st.gen++;
+  stopAEPoll();
+  if (st.stream) st.stream.getTracks().forEach(t => t.stop());
+  st.stream = null; st.track = null; st.ic = null;
+}
+
+function readCaps() {
+  let c = {};
+  try { c = st.track.getCapabilities ? st.track.getCapabilities() : {}; } catch {}
+  const s = safeSettings();
+  const et = c.exposureTime, iso = c.iso;
+  st.caps = {
+    raw: c,
+    modes: c.exposureMode || [],
+    t100min: et ? Math.max(et.min, 0.01) : null,
+    t100max: et ? et.max : null,
+    t100step: et && et.step > 0 ? et.step : 0,
+    tMin: et ? Math.max(et.min, 0.01) / 1e4 : null,
+    tMax: et ? et.max / 1e4 : null,
+    isoMin: iso ? iso.min : null, isoMax: iso ? iso.max : null,
+    isoStep: iso && iso.step > 0 ? iso.step : 0,
+    fixedIso: s.iso != null ? s.iso : null,
+    frameRate: s.frameRate || 30,
+  };
+  st.canLock = st.caps.modes.includes('manual') && !!et && et.max > 0 && (!!iso || s.iso != null);
+  $('#modeLocked').disabled = !st.canLock;
+}
+
+async function listCameras() {
+  try {
+    const devs = await navigator.mediaDevices.enumerateDevices();
+    st.cameras = devs.filter(d => d.kind === 'videoinput');
+  } catch { st.cameras = []; }
+  const cur = safeSettings().deviceId;
+  const sel = $('#selCam');
+  sel.innerHTML = st.cameras.map((d, i) =>
+    `<option value="${esc(d.deviceId)}"${d.deviceId === cur ? ' selected' : ''}>${esc(d.label || 'Camera ' + (i + 1))}</option>`).join('');
+}
+
+/* Exposure control ------------------------------------------------ */
+function tMaxPreview() { return Math.min(st.caps.tMax, 1 / Math.max(15, st.caps.frameRate || 30)); }
+function isoRange() {
+  const c = st.caps;
+  const f = c.fixedIso || st.cur.S || 100;
+  return [c.isoMin != null ? c.isoMin : f, c.isoMax != null ? c.isoMax : f];
+}
+// Split a brightness target B = log2(t·S) into a shutter and ISO: lowest ISO first,
+// shutter no longer than one preview frame, then raise ISO.
+function splitExposure(B) {
+  const [Smin, Smax] = isoRange();
+  const tMin = st.caps.tMin, tMaxP = tMaxPreview();
+  let S = Smin, t = 2 ** B / S;
+  if (t > tMaxP) { t = tMaxP; S = clamp(2 ** B / t, Smin, Smax); }
+  if (t < tMin) t = tMin;
+  return { t, S };
+}
+
+async function applyExposure(t, iso) {
+  const c = st.caps;
+  if (!st.track || !c) return false;
+  let t100 = clamp(t * 1e4, c.t100min, c.t100max);
+  if (c.t100step) t100 = clamp(Math.round(t100 / c.t100step) * c.t100step, c.t100min, c.t100max);
+  const set = { exposureMode: 'manual', exposureTime: t100 };
+  let s = iso;
+  if (c.isoMin != null) {
+    s = clamp(s, c.isoMin, c.isoMax);
+    if (c.isoStep) s = clamp(Math.round(s / c.isoStep) * c.isoStep, c.isoMin, c.isoMax);
+    set.iso = s;
+  }
+  st.applying = true;
+  try {
+    await st.track.applyConstraints({ advanced: [set] });
+  } catch (e) {
+    logMsg('applyConstraints failed: ' + e.name + ' ' + (e.message || ''));
+    st.applying = false;
+    return false;
+  }
+  const r = safeSettings();
+  const at = r.exposureTime != null ? r.exposureTime / 1e4 : t100 / 1e4;
+  const aS = r.iso != null ? r.iso : s;
+  if (Math.abs(log2(at / (t100 / 1e4))) > 0.1 || (set.iso != null && Math.abs(log2(aS / set.iso)) > 0.1)) {
+    logMsg(`Asked ${fmtT(t100 / 1e4)} ISO ${Math.round(set.iso ?? s)}, camera reports ${fmtT(at)} ISO ${Math.round(aS)}`);
+  }
+  st.cur = { t: at, S: aS };
+  st.settleUntil = performance.now() + 450;
+  st.ly = null;
+  st.applying = false;
+  return true;
+}
+
+async function setMode(m) {
+  if (m === 'locked' && !st.canLock) m = 'auto';
+  st.mode = m;
+  $('#modeLocked').setAttribute('aria-pressed', m === 'locked');
+  $('#modeAuto').setAttribute('aria-pressed', m === 'auto');
+  st.ly = null; st.limit = null; st.outCount = 0;
+  if (!st.track) return;
+  if (m === 'auto') {
+    try { await st.track.applyConstraints({ advanced: [{ exposureMode: 'continuous' }] }); }
+    catch (e) { logMsg('Could not set continuous exposure: ' + e.name); }
+    st.cur = { t: null, S: null };
+    st.settleUntil = performance.now() + 300;
+    startAEPoll();
+  } else {
+    stopAEPoll();
+    let B = log2((1 / 250) * 100);
+    if (st.aeLast) B = log2(st.aeLast.t * st.aeLast.S);
+    const sp = splitExposure(B);
+    await applyExposure(sp.t, sp.S);
+  }
+  renderUI(true);
+}
+
+/* Auto exposure readout ------------------------------------------- */
+function startAEPoll() { stopAEPoll(); st.aeTimer = setInterval(pollAE, 400); }
+function stopAEPoll() { if (st.aeTimer) clearInterval(st.aeTimer); st.aeTimer = null; }
+async function pollAE() {
+  if (!st.track || st.aePolling) return;
+  st.aePolling = true;
+  const a = safeSettings();
+  const t0 = performance.now();
+  // Asking ImageCapture for photo settings makes Chrome re-read the camera state.
+  if (st.ic && st.ic.getPhotoSettings) { try { await st.ic.getPhotoSettings(); } catch {} }
+  const ms = performance.now() - t0;
+  const b = safeSettings();
+  st.aePolling = false;
+  const t = b.exposureTime != null ? b.exposureTime / 1e4 : null;
+  const S = b.iso != null ? b.iso : null;
+  if (t && S) st.aeLast = { t, S };
+  if (st.mode === 'auto') st.cur = (t && S) ? { t, S } : { t: null, S: null };
+  const sample = { tA: a.exposureTime ?? null, sA: a.iso ?? null, tB: b.exposureTime ?? null, sB: b.iso ?? null,
+                   lin: st.region ? st.region.lin : null, ms: Math.round(ms), mode: b.exposureMode };
+  st.aeCollectors.forEach(f => f(sample));
+}
+
+/* ================================================================
+   Frame loop: crop → draw → measure
+   ================================================================ */
+function loop(gen) {
+  if (gen !== st.gen) return;
+  const next = () => { if (gen === st.gen) { processFrame(); loop(gen); } };
+  if ('requestVideoFrameCallback' in HTMLVideoElement.prototype) video.requestVideoFrameCallback(next);
+  else requestAnimationFrame(next);
+}
+
+function processFrame() {
+  const vw = video.videoWidth, vh = video.videoHeight;
+  if (!vw || !vh) return;
+  const fmt = FORMATS[cfg.format] || FORMATS['35'];
+  const crop = Meter.crop(vw, vh, cfg.phoneEq, cfg.focal, fmt);
+  st.crop = crop;
+  drawView(crop);
+  const stats = sample(crop);
+  handleStats(stats);
+  st.frames++;
+  const now = performance.now();
+  if (now - st.fpsT0 > 1000) { st.fps = st.frames * 1000 / (now - st.fpsT0); st.frames = 0; st.fpsT0 = now; }
+}
+
+let viewKey = '';
+function drawView(crop) {
+  const box = $('#finder').getBoundingClientRect();
+  const dpr = Math.min(2, window.devicePixelRatio || 1);
+  const ar = crop.w / crop.h;
+  let w = box.width, h = w / ar;
+  if (h > box.height) { h = box.height; w = h * ar; }
+  const key = `${Math.round(w)}x${Math.round(h)}@${dpr}`;
+  if (key !== viewKey) {
+    viewKey = key;
+    view.width = Math.round(w * dpr); view.height = Math.round(h * dpr);
+    view.style.width = Math.round(w) + 'px'; view.style.height = Math.round(h) + 'px';
+  }
+  const W = view.width, H = view.height;
+  vctx.filter = 'grayscale(1)';
+  vctx.drawImage(video, crop.x, crop.y, crop.w, crop.h, 0, 0, W, H);
+  vctx.filter = 'none';
+  vctx.strokeStyle = 'rgba(255,255,255,.5)';
+  vctx.lineWidth = Math.max(1, dpr);
+  vctx.beginPath();
+  for (let i = 1; i < 3; i++) {
+    vctx.moveTo(W * i / 3, 0); vctx.lineTo(W * i / 3, H);
+    vctx.moveTo(0, H * i / 3); vctx.lineTo(W, H * i / 3);
+  }
+  vctx.stroke();
+  if (st.spot != null) {
+    const cx = st.spot % 3, cy = Math.floor(st.spot / 3);
+    vctx.strokeStyle = '#e3120b';
+    vctx.lineWidth = 3 * dpr;
+    vctx.strokeRect(W * cx / 3 + 1.5 * dpr, H * cy / 3 + 1.5 * dpr, W / 3 - 3 * dpr, H / 3 - 3 * dpr);
+  }
+}
+
+function sample(crop) {
+  const L = 96;
+  const sw = crop.w >= crop.h ? L : Math.max(8, Math.round(L * crop.w / crop.h));
+  const sh = crop.h >= crop.w ? L : Math.max(8, Math.round(L * crop.h / crop.w));
+  if (samp.width !== sw || samp.height !== sh) { samp.width = sw; samp.height = sh; }
+  sctx.drawImage(video, crop.x, crop.y, crop.w, crop.h, 0, 0, sw, sh);
+  const d = sctx.getImageData(0, 0, sw, sh).data;
+  const cells = Array.from({ length: 9 }, () => ({ lin: 0, code: 0, clip: 0, n: 0 }));
+  for (let y = 0; y < sh; y++) {
+    const cy = Math.min(2, (y * 3 / sh) | 0);
+    for (let x = 0; x < sw; x++) {
+      const cx = Math.min(2, (x * 3 / sw) | 0);
+      const i = (y * sw + x) * 4, r = d[i], g = d[i + 1], b = d[i + 2];
+      const c = cells[cy * 3 + cx];
+      c.lin += 0.2126 * LUT[r] + 0.7152 * LUT[g] + 0.0722 * LUT[b];
+      c.code += (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+      if (r >= 250 || g >= 250 || b >= 250) c.clip++;
+      c.n++;
+    }
+  }
+  const all = { lin: 0, code: 0, clip: 0, n: 0 };
+  for (const c of cells) { all.lin += c.lin; all.code += c.code; all.clip += c.clip; all.n += c.n; }
+  const norm = c => ({ lin: c.lin / c.n, code: c.code / c.n, clip: c.clip / c.n, n: c.n });
+  return { all: norm(all), cells: cells.map(norm), px: sw * sh };
+}
+
+function handleStats(stats) {
+  const now = performance.now();
+  const region = st.spot != null ? stats.cells[st.spot] : stats.all;
+  st.region = region;
+  const settling = now < st.settleUntil || st.applying;
+  const snap = { ...region, t: st.cur.t, S: st.cur.S, settling };
+  st.collectors.slice().forEach(f => f(snap));
+  if (settling) { renderUI(); return; }
+
+  // Smooth in the log domain (about 1/4 s)
+  const ly = log2(Math.max(region.lin, 1e-5));
+  st.ly = st.ly == null ? ly : st.ly + (ly - st.ly) * 0.25;
+
+  if (st.mode === 'locked') { checkLockEffect(region); if (!st.testing && st.lockOK !== false) maybeRange(region); }
+  renderUI();
+}
+
+// After a re-range, did brightness actually move the way we asked?
+function checkLockEffect(region) {
+  const r = st.lastRange;
+  if (!r || r.checked) return;
+  if (++r.n < 4) return;
+  r.checked = true;
+  if (Math.abs(r.expected) < 1) return;
+  // Still blown out or still black: no information either way
+  if ((r.clipBefore > 0.25 && region.clip > 0.25) || (r.linBefore < 0.004 && region.lin < 0.004)) return;
+  const actual = log2(Math.max(region.lin, 1e-5) / Math.max(r.linBefore, 1e-5));
+  if (Math.abs(actual) < 0.25 * Math.abs(r.expected)) {
+    st.ineffective++;
+    if (st.ineffective >= 3 && st.lockOK !== false) { st.lockOK = false; logMsg('Manual exposure changes are not reaching the image'); }
+  } else { st.ineffective = 0; st.lockOK = true; }
+}
+
+// Null metering: keep nudging the locked exposure until the metered area sits
+// within ±0.5 stop of mid-grey. The reading then comes almost entirely from the
+// shutter and ISO the camera reports, and the phone's tone curve barely matters.
+const NULL_WINDOW = 0.5;
+function maybeRange(region) {
+  if (st.applying) return;
+  const clipped = region.clip > 0.02;
+  const dev = log2(Math.max(region.lin, 1e-5) / 0.18);
+  if (!clipped && Math.abs(dev) <= NULL_WINDOW) { st.outCount = 0; st.limit = null; return; }
+  const bright = clipped || dev > 0;
+  if (++st.outCount < 4) return;
+  st.outCount = 0;
+  let d = -dev / Math.max(1, cfg.k);   // damped if the response is steeper than linear
+  if (clipped) d = Math.min(d, region.clip > 0.5 ? -5 : region.clip > 0.25 ? -3 : -1.5);
+  d = clamp(d, -5, 5);
+  const B0 = log2(st.cur.t * st.cur.S);
+  const sp = splitExposure(B0 + d);
+  const got = log2(sp.t * sp.S) - B0;
+  if (Math.abs(got) < 0.1) { st.limit = bright ? 'Too bright for phone' : 'Too dark for phone'; return; }
+  st.limit = null;
+  st.lastRange = { linBefore: region.lin, clipBefore: region.clip, expected: got, n: 0, checked: false };
+  applyExposure(sp.t, sp.S);
+}
+
+/* ================================================================
+   Readout
+   ================================================================ */
+function currentEV(C = cfg.C) {
+  const { t, S } = st.cur;
+  if (st.ly == null || !t || !S) return null;
+  if (st.mode === 'auto' && cfg.aeLive === false) return null;   // test 3 found the values are stale
+  return Meter.ev100({ N: cfg.N, t, S, Y: 2 ** st.ly, k: cfg.k, C });
+}
+
+// Shutter for full-stop aperture i (N = √2^i) at a given EV
+function pairFor(i, evIso) {
+  const lt = i - evIso, k = Math.round(lt), frac = lt - k;   // log2(t) = log2(N²) − EV
+  if (k < -13) return { sh: '<1/8000', out: true, frac, k };
+  if (k > 12) return { sh: '>1h', out: true, frac, k };
+  return { sh: fmtShutterNominal(2 ** k), out: false, frac, k };
+}
+
+function renderUI(force) {
+  const now = performance.now();
+  if (!force && now - st.lastUI < 140) return;
+  st.lastUI = now;
+  const live = currentEV();
+  const ev = st.hold ? st.heldEV : live;
+  $('#evNum').textContent = ev == null ? '—' : ev.toFixed(1);
+  $('#evHint').textContent = st.hold ? 'Held · tap to release' : 'Tap to hold';
+  renderPairs(ev);
+
+  const fmt = FORMATS[cfg.format];
+  let lens = `${cfg.focal}mm · ${fmt.label}`;
+  if (cfg.format !== '35') lens += ` ≈ ${Math.round(Meter.equivFocal(cfg.focal, fmt))}mm`;
+  $('#chipLens').textContent = lens;
+  const settling = performance.now() < st.settleUntil;
+  $('#chipMode').textContent = st.mode === 'locked' ? (settling ? 'Ranging…' : 'Locked') : 'Auto';
+  $('#chipSpot').textContent = st.spot == null ? 'Average' : 'Spot';
+  let warn = null;
+  if (st.mode === 'locked' && st.lockOK === false) warn = 'Lock ignored';
+  else if (st.limit) warn = st.limit;
+  else if (st.mode === 'auto' && st.track && (cfg.aeLive === false || (!st.cur.t && performance.now() > st.settleUntil + 1500))) warn = 'No AE values';
+  else if (st.region && st.region.clip > 0.05) warn = 'Clipping';
+  $('#chipWarn').hidden = !warn; if (warn) $('#chipWarn').textContent = warn;
+  $('#chipWide').hidden = !(st.crop && st.crop.wide);
+  $('#btnShoot').disabled = !st.track || ev == null;
+  renderBars();
+  if (!$('#pFormula').hidden) renderFormula();
+}
+
+function renderBars() {
+  const fmt = FORMATS[cfg.format];
+  const r = activeRoll();
+  const n = $('#forName');
+  n.textContent = r ? cameraName(r) : 'No camera selected';
+  $('#forFmt').textContent = fmt.label;
+  const fr = $('#forRoll');
+  if (r) {
+    const next = nextFrame(r);
+    let html = `<b>${esc(r.filmName)}</b> @ ${r.ratedIso} · next frame <b>${next}</b> of ${r.exposures}`;
+    if (cfg.iso !== r.ratedIso) html += ` · <span class="warn">meter set to ISO ${cfg.iso}</span>`;
+    else if (next > r.exposures) html += ' · <span class="warn">roll full?</span>';
+    if (fr.innerHTML !== html) fr.innerHTML = html;
+  } else {
+    fr.textContent = lb.rolls.some(x => x.status === 'loaded') ? 'No roll picked' : 'No roll loaded';
+  }
+  $('#btnRolls').textContent = r ? 'Change roll' : lb.rolls.some(x => x.status === 'loaded') ? 'Pick a roll' : 'Load a roll';
+  $('#finder').classList.toggle('idle', !$('#startPane').hidden);
+  $('#phoneCam').textContent = st.track
+    ? `Phone: ${st.track.label || 'unnamed'} · f/${cfg.N}, ${cfg.phoneEq}mm`
+    : 'Phone camera off';
+  const on = !!st.track;
+  $('#btnCam').setAttribute('aria-pressed', on);
+  $('#camState').textContent = on ? 'On' : 'Off';
+  $('#shotCount').textContent = shots.length;
+}
+
+/* Explanations shown over the viewfinder */
+let explainTimer = null;
+function explain(title, text, ms = 5000) {
+  const box = $('#explain');
+  $('#explainTitle').textContent = title;
+  $('#explainText').textContent = text;
+  box.hidden = false;
+  clearTimeout(explainTimer);
+  explainTimer = setTimeout(() => { box.hidden = true; }, ms);
+}
+const MODE_TEXT = {
+  locked: () => 'The page fixes the phone\'s shutter and ISO itself, then measures how bright the scene is against those known settings. This is the accurate mode.',
+  auto: () => cfg.aeLive === true
+    ? 'The phone picks its own exposure, like its camera app, and Chrome tells the page what it picked. Useful as a cross-check.'
+    : cfg.aeLive === false
+      ? 'The phone picks its own exposure, like its camera app. On this phone Chrome doesn\'t report what it picked (test 3), so Auto can\'t give a reading. Use Locked.'
+      : 'The phone picks its own exposure, like its camera app. It only gives a reading if Chrome reports what the phone picked. Test 3 checks that.',
+};
+
+/* Aperture/speed suggestion ---------------------------------------
+   No lock: the meter suggests both, starting at f/8, opening up until the
+   speed is hand-holdable for the lens (1/focal length, 35mm equivalent)
+   and stopping down if it would need faster than 1/1000.
+   Aperture locked: the speed follows the light. Speed locked: the aperture
+   follows, to the nearest third of a stop. */
+const FASTEST_K = -10;   // 1/1000, the top speed of most film SLRs
+const LOCK = '<svg class="lk" width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><rect x="2.5" y="6" width="9" height="6.5" fill="currentColor"></rect><path d="M4.5 6V4.5a2.5 2.5 0 0 1 5 0V6" fill="none" stroke="currentColor" stroke-width="1.6"></path></svg>';
+function programAperture(evIso) {
+  const eq = Meter.equivFocal(cfg.focal, FORMATS[cfg.format] || FORMATS['35']);
+  const slowest = log2(1 / Math.max(30, eq));
+  const lens = defaultLens(activeRoll());
+  const iOpen = lens && lens.maxAp ? clamp(Math.ceil(2 * log2(+lens.maxAp) - 0.05), 1, 11) : 1;
+  const iClosed = 9;   // f/22
+  let i = clamp(6, iOpen, iClosed);
+  while (i > iOpen && i - evIso > slowest) i--;
+  while (i < iClosed && i - evIso < FASTEST_K) i++;
+  const lt = i - evIso;
+  const hint = lt > slowest + 0.25 ? 'Slow for handheld: brace it or use a tripod'
+    : lt < FASTEST_K - 0.5 ? 'Needs faster than 1/1000: check your camera’s top speed' : null;
+  return { i, hint };
+}
+function currentPair(ev100) {
+  if (ev100 == null) return null;
+  const evIso = Meter.evAtIso(ev100, cfg.iso);
+  if (cfg.pairLock === 'sh') {
+    const k = cfg.lockK, j = Math.round(3 * (evIso + k)), jc = clamp(j, 0, 36), sl = fmtShutterNominal(2 ** k);
+    return { lock: 'sh', evIso, row: clamp(Math.round(jc / 3), 1, 11), k, apI3: jc, apLabel: apLabel(jc), shK3: k * 3, shLabel: sl, frac: 0,
+      hint: j < 0 ? `Too dark for ${sl}: release it or pick a slower speed` : j > 36 ? `Too bright for ${sl}: pick a faster speed` : null };
+  }
+  const prog = cfg.pairLock === 'ap' ? null : programAperture(evIso);
+  const i = prog ? prog.i : cfg.prefI;
+  const p = pairFor(i, evIso);
+  return { lock: prog ? 'none' : 'ap', evIso, row: i, k: p.k, apI3: 3 * i, apLabel: 'f/' + AP_FULL[i],
+    shK3: p.k >= -13 && p.k <= 5 ? 3 * p.k : 'B', shLabel: p.sh, frac: p.frac,
+    hint: prog ? prog.hint : (p.out ? 'Outside the shutter range: release the aperture' : null) };
+}
+function releasePair() {
+  cfg.pairLock = 'none'; store.save(); renderUI(true);
+  explain('Suggesting both again', 'The meter picks the pair: around f/8, opening up to keep the speed hand-holdable for your lens.', 3500);
+}
+function lockAperture(i) {
+  i = clamp(i, 1, 11);
+  if (cfg.pairLock === 'ap' && cfg.prefI === i) { releasePair(); return; }
+  cfg.pairLock = 'ap'; cfg.prefI = i; store.save(); renderUI(true);
+  explain(`f/${AP_FULL[i]} locked`, `The aperture stays at f/${AP_FULL[i]} and the speed follows the light. Tap f/${AP_FULL[i]} again to release it.`, 3500);
+}
+function lockShutter(k) {
+  k = clamp(k, -13, 5);
+  if (cfg.pairLock === 'sh' && cfg.lockK === k) { releasePair(); return; }
+  cfg.pairLock = 'sh'; cfg.lockK = k; store.save(); renderUI(true);
+  const l = fmtShutterNominal(2 ** k);
+  explain(`${l} locked`, `The speed stays at ${l} and the aperture follows the light. Tap ${l} again to release it.`, 3500);
+}
+
+function renderPairs(ev100) {
+  const box = $('#pairs');
+  const cur = currentPair(ev100);
+  const rows = [];
+  for (let i = 1; i <= 11; i++) {
+    let sh = '—', out = false, k = null;
+    if (cur) ({ sh, out, k } = pairFor(i, cur.evIso));
+    const apLocked = cfg.pairLock === 'ap' && i === cfg.prefI;
+    const shLocked = cfg.pairLock === 'sh' && cur && k === cfg.lockK;
+    rows.push(`<div class="prow${cur && i === cur.row ? ' sel' : ''}${out ? ' out' : ''}">`
+      + `<button class="pa" data-ap="${i}" aria-pressed="${apLocked}" aria-label="${apLocked ? 'Release' : 'Lock'} aperture f/${AP_FULL[i]}">${apLocked ? LOCK : ''}f/${AP_FULL[i]}</button>`
+      + '<span class="pm" aria-hidden="true"></span>'
+      + `<button class="ps" data-sh="${k == null ? '' : k}" aria-pressed="${!!shLocked}" aria-label="${shLocked ? 'Release' : 'Lock'} speed ${sh}"${k == null || out ? ' disabled' : ''}>${sh}${shLocked ? LOCK : ''}</button></div>`);
+  }
+  const html = rows.join('');
+  if (box._html !== html) { box.innerHTML = html; box._html = html; }
+
+  // Readout: the suggested (or locked) pair; each value is a lock button
+  const ta = $('#tokAp'), ts = $('#tokSh');
+  const apText = cur ? cur.apLabel : (cfg.pairLock === 'ap' ? 'f/' + AP_FULL[cfg.prefI] : 'f/—');
+  const shText = cur ? cur.shLabel : (cfg.pairLock === 'sh' ? fmtShutterNominal(2 ** cfg.lockK) : '—');
+  const apHtml = (cfg.pairLock === 'ap' ? LOCK : '') + esc(apText), shHtml = esc(shText) + (cfg.pairLock === 'sh' ? LOCK : '');
+  if (ta._html !== apHtml) { ta.innerHTML = apHtml; ta._html = apHtml; }
+  if (ts._html !== shHtml) { ts.innerHTML = shHtml; ts._html = shHtml; }
+  ta.setAttribute('aria-pressed', cfg.pairLock === 'ap'); ts.setAttribute('aria-pressed', cfg.pairLock === 'sh');
+  ta.disabled = ts.disabled = !cur;
+  ta.setAttribute('aria-label', cfg.pairLock === 'ap' ? `Aperture ${apText}, locked. Tap to release.` : `Aperture ${apText}. Tap to lock.`);
+  ts.setAttribute('aria-label', cfg.pairLock === 'sh' ? `Speed ${shText}, locked. Tap to release.` : `Speed ${shText}. Tap to lock.`);
+
+  const fw = cur ? fracWord(cur.frac) : null;
+  // frac > 0: the exact shutter is longer than shown → give more light
+  const n = $('#pairNote');
+  n.textContent = fw ? `Exact reading is ${fw} stop ${cur.frac > 0 ? 'more' : 'less'} light than these full-stop pairs` : '';
+  n.className = 'note' + (fw ? ' red' : '');
+  $('#evIso').textContent = !cur
+    ? (st.track ? 'Measuring…' : 'Waiting for a reading')
+    : `EV ${cur.evIso.toFixed(1)} at ISO ${cfg.iso}${fw ? ` · ${cur.frac > 0 ? '+' : '−'}${fw}` : ''}`;
+  const status = cfg.pairLock === 'ap' ? `Aperture locked · tap ${esc(apText)} to release`
+    : cfg.pairLock === 'sh' ? `Speed locked · tap ${esc(shText)} to release`
+    : 'Suggested · tap a value to lock it';
+  const note = cur ? status + (cur.hint ? `<br><span class="warn">${esc(cur.hint)}</span>` : '') : '';
+  const ln = $('#lockNote');
+  if (ln._html !== note) { ln.innerHTML = note; ln._html = note; }
+}
+
+function pairFormulaLine(ev) {
+  const cp = currentPair(ev);
+  if (!cp) return '';
+  if (cp.lock === 'sh') return `${cp.shLabel} locked: N = √(t·2^EV) = f/${Math.sqrt(2 ** cp.k * 2 ** cp.evIso).toFixed(1)} → ${cp.apLabel}`;
+  return `${cp.apLabel}${cp.lock === 'ap' ? ' locked' : ' suggested'}: t = N²/2^EV = ${fmtT(2 ** (cp.row - cp.evIso))} → ${cp.shLabel}`;
+}
+function renderFormula() {
+  const { t, S } = st.cur;
+  const el = $('#formula');
+  if (st.ly == null || !t || !S) { el.textContent = st.mode === 'auto' && st.track && !t ? 'Chrome is not reporting the auto-exposure\nshutter/ISO, so no reading is possible\nin Auto. Try Locked.' : 'Waiting for a reading…'; return; }
+  const Y = 2 ** st.ly;
+  const T = Meter.terms({ N: cfg.N, t, S, Y, k: cfg.k, C: cfg.C });
+  const ev = T.a + T.b + T.c + T.C;
+  const evIso = Meter.evAtIso(ev, cfg.iso);
+  const r = st.region || {};
+  const pad = (s, n) => String(s).padEnd(n);
+  el.textContent =
+`EV100 = log2(N²/t) − log2(S/100)
+        + log2(Y/0.18)/k + C
+
+N = ${cfg.N}   t = ${fmtT(t)} s   S = ${Math.round(S)}
+Y = ${Y.toFixed(4)}   k = ${cfg.k}   C = ${sgn(cfg.C, 1)}
+${st.mode === 'locked' ? 'locked exposure' : 'auto exposure (reported)'} · ${st.spot == null ? 'average' : 'spot'}
+area ${(st.crop ? st.crop.frac * 100 : 0).toFixed(0)}% of phone frame · clip ${((r.clip || 0) * 100).toFixed(1)}%
+
+${pad('log2(N²/t)', 15)}= ${sgn(T.a)}
+${pad('−log2(S/100)', 15)}= ${sgn(T.b)}
+${pad('log2(Y/.18)/k', 15)}= ${sgn(T.c)}
+${pad('C', 15)}= ${sgn(T.C)}
+${pad('EV100', 15)}= ${ev.toFixed(2)}
+
+ISO ${cfg.iso}: EV = ${ev.toFixed(2)} ${sgn(log2(cfg.iso / 100))} = ${evIso.toFixed(2)}
+${pairFormulaLine(ev)}`;
+}
+
+/* ================================================================
+   Tests
+   ================================================================ */
+function measure(n = 8, timeout = 6000) {
+  return new Promise((res, rej) => {
+    const arr = [];
+    const f = s => {
+      if (s.settling) return;
+      arr.push(s);
+      if (arr.length >= n) { done(); res({ lin: avg(arr.map(a => a.lin)), code: avg(arr.map(a => a.code)), clip: avg(arr.map(a => a.clip)), t: arr[arr.length - 1].t, S: arr[arr.length - 1].S }); }
+    };
+    const done = () => { clearTimeout(tm); const i = st.collectors.indexOf(f); if (i >= 0) st.collectors.splice(i, 1); };
+    const tm = setTimeout(() => { done(); rej(new Error('No frames')); }, timeout);
+    st.collectors.push(f);
+  });
+}
+
+function linfit(xs, ys) {
+  const mx = avg(xs), my = avg(ys);
+  let sxy = 0, sxx = 0, syy = 0;
+  for (let i = 0; i < xs.length; i++) { sxy += (xs[i] - mx) * (ys[i] - my); sxx += (xs[i] - mx) ** 2; syy += (ys[i] - my) ** 2; }
+  return { slope: sxx ? sxy / sxx : 0, r2: sxx && syy ? (sxy * sxy) / (sxx * syy) : 0 };
+}
+function fitSweep(pts, lo = 0.003, hi = 1) {
+  const u = pts.filter(p => p.clip < 0.05 && p.lin > lo && p.lin < hi && p.t && p.S);
+  if (u.length < 3) return { n: u.length };
+  const xs = u.map(p => log2(p.t * p.S));
+  const a = linfit(xs, u.map(p => log2(p.lin)));
+  const b = linfit(xs, u.map(p => log2(Math.max(p.code, 1e-4))));
+  return { n: u.length, slope: +a.slope.toFixed(3), r2: +a.r2.toFixed(3), slopeCode: +b.slope.toFixed(3), span: +(Math.max(...xs) - Math.min(...xs)).toFixed(2) };
+}
+// Null metering only reads near mid-grey, so judge the response there when we can
+const MID_LO = 0.05, MID_HI = 0.5;
+const judged = (all, mid) => (mid && mid.n >= 3 ? mid : all);
+function sweepVerdict(f) {
+  if (!f) return { cls: 'idle', txt: 'Not run' };
+  if (f.n < 3) return { cls: 'warn', txt: 'Too few usable steps' };
+  if (f.span < 0.5) return { cls: 'bad', txt: 'Settings not reported' };
+  if (f.slope < 0.3) return { cls: 'bad', txt: 'Ignored' };
+  if (f.slope >= 0.85 && f.slope <= 1.15 && f.r2 > 0.97) return { cls: 'ok', txt: 'Linear' };
+  return { cls: 'warn', txt: 'Non-linear' };
+}
+
+async function runSweep() {
+  if (!st.canLock || st.testing) return;
+  const status = $('#sweepStatus');
+  const btns = ['#btnSweep', '#btnAE', '#btnScan', '#btnCalRec'].map(s => $(s));
+  btns.forEach(b => b.disabled = true);
+  $('#btnUseK').hidden = true;
+  try {
+    if (st.mode !== 'locked') await setMode('locked');
+    status.textContent = 'Settling…';
+    await sleep(1500);
+    st.testing = true;
+    const m0 = await measure(8);
+    const c = st.caps;
+    const [Smin, Smax] = isoRange();
+    const tMaxP = tMaxPreview();
+    // Aim the middle step at ~12% linear so +1 stop stays well below clipping
+    const B = log2(st.cur.t * st.cur.S) + log2(0.12 / Math.max(m0.lin, 1e-4));
+    const steps = [-3, -2, -1, -0.5, 0, 0.5, 1];
+
+    // Shutter sweep at fixed ISO
+    let S0 = Smin, t0 = 2 ** B / S0;
+    if (t0 * 2 > tMaxP) { t0 = tMaxP / 2; S0 = clamp(2 ** B / t0, Smin, Smax); }
+    if (t0 / 8 < c.tMin) t0 = c.tMin * 8;
+    const timePts = [];
+    for (const d of steps) {
+      status.textContent = `Shutter ${d > 0 ? '+' : ''}${d} stop${Math.abs(d) <= 1 ? '' : 's'}…`;
+      await applyExposure(t0 * 2 ** d, S0);
+      await sleep(300);
+      const m = await measure(8);
+      timePts.push({ d, t: st.cur.t, S: st.cur.S, lin: m.lin, code: m.code, clip: m.clip });
+    }
+
+    // ISO sweep at fixed shutter
+    const isoPts = [];
+    if (c.isoMin != null && c.isoMax > c.isoMin * 2) {
+      // Centre ISO high enough that the shutter it needs fits in one preview frame
+      const S1 = clamp(Math.max(c.isoMin * 8, 2 ** B / tMaxP), c.isoMin, c.isoMax / 2);
+      const t1 = clamp(2 ** B / S1, c.tMin, tMaxP);
+      for (const d of steps) {
+        const s = S1 * 2 ** d;
+        if (s < c.isoMin * 0.97 || s > c.isoMax * 1.03) continue;
+        status.textContent = `ISO ${Math.round(s)}…`;
+        await applyExposure(t1, s);
+        await sleep(300);
+        const m = await measure(8);
+        isoPts.push({ d, t: st.cur.t, S: st.cur.S, lin: m.lin, code: m.code, clip: m.clip });
+      }
+    }
+    st.results.sweep = { at: new Date().toISOString(), time: timePts, iso: isoPts,
+      fitTime: fitSweep(timePts), fitIso: fitSweep(isoPts),
+      fitTimeMid: fitSweep(timePts, MID_LO, MID_HI), fitIsoMid: fitSweep(isoPts, MID_LO, MID_HI) };
+    const v = sweepVerdict(judged(st.results.sweep.fitTime, st.results.sweep.fitTimeMid));
+    if (v.cls === 'ok') st.lockOK = true;
+    if (v.txt === 'Ignored') st.lockOK = false;
+    status.textContent = 'Done.';
+    const R = st.results.sweep;
+    logMsg(`Sweep: shutter slope ${R.fitTime.slope ?? '—'} (mid ${R.fitTimeMid.slope ?? '—'}), ISO slope ${R.fitIso.slope ?? '—'} (mid ${R.fitIsoMid.slope ?? '—'})`);
+  } catch (e) {
+    status.textContent = 'Stopped: ' + e.message;
+    logMsg('Sweep error: ' + e.message);
+  } finally {
+    st.testing = false; st.outCount = 0; st.ly = null;
+    btns.forEach(b => b.disabled = false);
+    renderSweep(); renderVerdict();
+  }
+}
+
+function renderSweep() {
+  const r = st.results.sweep;
+  const out = $('#sweepOut');
+  if (!r) { out.innerHTML = ''; return; }
+  const fT = judged(r.fitTime, r.fitTimeMid), fS = judged(r.fitIso, r.fitIsoMid);
+  const vT = sweepVerdict(fT), vS = r.iso.length ? sweepVerdict(fS) : { cls: 'idle', txt: 'Not available' };
+  const tbl = (pts, label) => pts.length ? `<table><tr><th>${label}</th><th>Shutter</th><th>ISO</th><th>Brightness</th><th>Clip</th></tr>${
+    pts.map(p => `<tr><td>${p.d > 0 ? '+' : ''}${p.d}</td><td>${fmtT(p.t)}</td><td>${Math.round(p.S)}</td><td>${p.lin.toFixed(4)}</td><td>${(p.clip * 100).toFixed(0)}%</td></tr>`).join('')}</table>` : '';
+  const line = (name, all, mid, v) => `<dl class="kv"><dt>${name}</dt><dd><span class="badge ${v.cls}">${v.txt}</span></dd>${
+    mid && mid.slope != null ? `<dt>Slope near mid-grey (1 = ideal)</dt><dd>${mid.slope} · R² ${mid.r2}</dd>` : ''}${
+    all.slope != null ? `<dt>Slope, whole range</dt><dd>${all.slope} · R² ${all.r2}</dd>` : ''}</dl>`;
+  out.innerHTML = line('Shutter', r.fitTime, r.fitTimeMid, vT) + tbl(r.time, 'Stop') + line('ISO', r.fitIso, r.fitIsoMid, vS) + tbl(r.iso, 'Stop');
+  const k = fT.slope;
+  $('#btnUseK').hidden = !(k && vT.cls === 'warn' && k > 0.5 && k < 1.6);
+  const b2 = $('#b2'); b2.className = 'badge ' + vT.cls; b2.textContent = vT.cls === 'ok' ? 'Works' : vT.txt;
+}
+
+async function runAE() {
+  if (st.testing) return;
+  const status = $('#aeStatus');
+  const btns = ['#btnSweep', '#btnAE', '#btnScan', '#btnCalRec'].map(s => $(s));
+  btns.forEach(b => b.disabled = true);
+  const prev = st.mode;
+  st.testing = true;
+  const samples = [];
+  const f = s => samples.push(s);
+  try {
+    await setMode('auto');
+    st.aeCollectors.push(f);
+    for (let i = 10; i > 0; i--) {
+      status.textContent = `${i}… ${i > 6 ? 'point at a window' : i > 3 ? 'now a dark corner' : 'back again'}`;
+      await sleep(1000);
+    }
+  } finally {
+    st.aeCollectors.splice(st.aeCollectors.indexOf(f), 1);
+    st.testing = false;
+    status.textContent = 'Done.';
+    const B = s => (s.tB && s.sB) ? log2(s.tB / 1e4 * s.sB) : null;
+    const Bs = samples.map(B).filter(x => x != null);
+    const Ys = samples.map(s => s.lin).filter(x => x > 0).map(x => log2(x));
+    const distinctA = new Set(samples.map(s => `${s.tA}|${s.sA}`)).size;
+    const distinctB = new Set(samples.map(s => `${s.tB}|${s.sB}`)).size;
+    const res = {
+      at: new Date().toISOString(), samples: samples.length,
+      reported: Bs.length > 0, distinctBeforeRefresh: distinctA, distinctAfterRefresh: distinctB,
+      exposureSpanStops: Bs.length ? +(Math.max(...Bs) - Math.min(...Bs)).toFixed(2) : 0,
+      brightnessSpanStops: Ys.length ? +(Math.max(...Ys) - Math.min(...Ys)).toFixed(2) : 0,
+      refreshMs: Math.round(avg(samples.map(s => s.ms))),
+      raw: samples.slice(0, 40),
+    };
+    st.results.ae = res;
+    const av = aeVerdict(res);
+    if (av.cls === 'ok') cfg.aeLive = true; else if (av.cls === 'bad') cfg.aeLive = false;
+    store.save();
+    logMsg(`AE test: ${res.distinctAfterRefresh} distinct values, span ${res.exposureSpanStops} stops`);
+    renderAE();
+    renderVerdict();
+    btns.forEach(b => b.disabled = false);
+    if (prev === 'locked') await setMode('locked');
+  }
+}
+function aeVerdict(r) {
+  if (!r) return { cls: 'idle', txt: 'Not run' };
+  if (!r.reported) return { cls: 'bad', txt: 'Not reported' };
+  if (r.exposureSpanStops >= 1.5) return { cls: 'ok', txt: 'Live' };
+  if (r.brightnessSpanStops >= 1.5 || r.distinctAfterRefresh <= 1) return { cls: 'bad', txt: 'Stale values' };
+  return { cls: 'warn', txt: 'Scene too even' };
+}
+function renderAE() {
+  const r = st.results.ae; if (!r) return;
+  const v = aeVerdict(r);
+  $('#aeOut').innerHTML = `<dl class="kv">
+    <dt>Result</dt><dd><span class="badge ${v.cls}">${v.txt}</span></dd>
+    <dt>Exposure range seen</dt><dd>${r.exposureSpanStops} stops</dd>
+    <dt>Distinct values</dt><dd>${r.distinctBeforeRefresh} plain · ${r.distinctAfterRefresh} after refresh</dd>
+    <dt>Refresh time</dt><dd>${r.refreshMs} ms</dd></dl>`;
+  const b = $('#b3'); b.className = 'badge ' + v.cls; b.textContent = v.txt;
+}
+
+async function scanCameras() {
+  const status = $('#scanStatus');
+  const prev = safeSettings().deviceId;
+  const btn = $('#btnScan'); btn.disabled = true;
+  const list = st.cameras.slice();
+  stopStream();
+  const out = [];
+  for (let i = 0; i < list.length; i++) {
+    const d = list[i];
+    status.textContent = `Opening ${i + 1} of ${list.length}…`;
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ video: { deviceId: { exact: d.deviceId }, width: { ideal: 1280 }, height: { ideal: 960 } } });
+      const tr = s.getVideoTracks()[0];
+      await sleep(500);
+      const c = tr.getCapabilities ? tr.getCapabilities() : {};
+      const se = tr.getSettings();
+      out.push({ label: d.label, facing: se.facingMode || null, size: `${se.width}×${se.height}`,
+        exposureMode: c.exposureMode || null, exposureTime: c.exposureTime || null, iso: c.iso || null,
+        zoom: c.zoom || null, focusDistance: c.focusDistance || null, maxSize: c.width && c.height ? `${c.width.max}×${c.height.max}` : null });
+      tr.stop();
+    } catch (e) { out.push({ label: d.label, error: e.name }); }
+  }
+  st.results.scan = out;
+  status.textContent = `Scanned ${out.length} camera${out.length === 1 ? '' : 's'}.`;
+  $('#scanOut').innerHTML = `<table><tr><th>Camera</th><th>Manual</th><th>Shutter range</th><th>ISO</th></tr>${out.map(o => `<tr><td>${esc(o.label || '?')}</td><td>${o.error ? esc(o.error) : (o.exposureMode && o.exposureMode.includes('manual') ? 'yes' : 'no')}</td><td>${o.exposureTime ? fmtT(Math.max(o.exposureTime.min, .01) / 1e4) + '–' + fmtT(o.exposureTime.max / 1e4) : '—'}</td><td>${o.iso ? o.iso.min + '–' + o.iso.max : '—'}</td></tr>`).join('')}</table>`;
+  await startCamera(prev);
+  btn.disabled = false;
+}
+
+function renderCaps() {
+  const c = st.caps;
+  if (!c || !st.track) return;
+  const s = safeSettings();
+  const rows = [
+    ['Camera', esc(st.track.label || '?')],
+    ['Stream', `${s.width}×${s.height} @ ${Math.round(s.frameRate || 0)}fps`],
+    ['Exposure modes', c.modes.length ? c.modes.join(', ') : 'none offered'],
+    ['Shutter range', c.tMin ? `${fmtT(c.tMin)} – ${fmtT(c.tMax)}` : 'not offered'],
+    ['ISO range', c.isoMin != null ? `${c.isoMin} – ${c.isoMax}` : (c.fixedIso != null ? `reports ${c.fixedIso}, not settable` : 'not offered')],
+    ['ImageCapture', st.ic ? 'yes' : 'no'],
+    ['Cameras listed', String(st.cameras.length)],
+  ];
+  $('#capsList').innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+  const b = $('#b1');
+  b.className = 'badge ' + (st.canLock ? 'ok' : 'bad');
+  b.textContent = st.canLock ? 'Manual offered' : 'No manual';
+}
+
+/* Calibration ----------------------------------------------------- */
+function calSummary() {
+  if (!cal.length) return null;
+  const offs = cal.map(p => p.offset);
+  const mean = avg(offs);
+  const sd = Math.sqrt(avg(offs.map(o => (o - mean) ** 2)));
+  let trend = null, scale = null;
+  const evs = cal.map(p => p.evRef);
+  if (cal.length >= 3 && Math.max(...evs) - Math.min(...evs) >= 3) {
+    trend = +linfit(evs, offs).slope.toFixed(3);
+    scale = +linfit(evs, cal.map(p => p.evRaw)).slope.toFixed(3);   // phone EV per true EV (1 = ideal)
+  }
+  return { n: cal.length, mean: +mean.toFixed(2), sd: +sd.toFixed(2), trendPerEV: trend, phoneEVperEV: scale };
+}
+async function recordCal() {
+  const status = $('#calStatus');
+  if (!st.cur.t || !st.cur.S) { status.textContent = 'No reading yet.'; return; }
+  const btn = $('#btnCalRec'); btn.disabled = true;
+  status.textContent = 'Measuring…';
+  try {
+    const m = await measure(12);
+    if (m.clip > 0.2) { status.textContent = 'Too much clipping — find an evenly lit surface.'; return; }
+    const evRaw = Meter.ev100({ N: cfg.N, t: m.t, S: m.S, Y: m.lin, k: cfg.k, C: 0 });
+    const N = 2 ** (cfg.calAp / 6), t = 2 ** (cfg.calSh3 / 3);
+    // Meter showing +0.7 means these settings give 0.7 stop more light than it
+    // recommends, so the scene it measured is 0.7 EV brighter than the settings.
+    const evRef = Meter.ev100FromSettings(N, t, cfg.iso) + cfg.calDev;
+    cal.push({ evRef: +evRef.toFixed(2), evRaw: +evRaw.toFixed(2), offset: +(evRef - evRaw).toFixed(2),
+      iso: cfg.iso, aperture: 'f/' + AP_THIRDS[cfg.calAp], shutter: SHUTTERS.find(s => s[0] === cfg.calSh3)[1], meterShows: +cfg.calDev.toFixed(2),
+      focal: cfg.focal, format: cfg.format, mode: st.mode, spot: st.spot != null, t: m.t, S: m.S, Y: +m.lin.toFixed(5), k: cfg.k, at: new Date().toISOString() });
+    store.save();
+    status.textContent = `Recorded: camera EV₁₀₀ ${evRef.toFixed(1)}, phone ${evRaw.toFixed(1)}, offset ${sgn(evRef - evRaw, 1)}.`;
+  } catch (e) { status.textContent = 'Failed: ' + e.message; }
+  finally { btn.disabled = false; renderCal(); renderVerdict(); }
+}
+function renderCal() {
+  const s = calSummary();
+  $('#btnCalApply').hidden = !s; $('#btnCalClear').hidden = !s;
+  const b = $('#b4');
+  if (!s) { $('#calOut').innerHTML = ''; b.className = 'badge idle'; b.textContent = 'No points'; return; }
+  const sorted = cal.map((p, i) => ({ ...p, i })).sort((a, b) => a.evRef - b.evRef);
+  $('#calOut').innerHTML = `<table><tr><th>Camera</th><th>EV₁₀₀</th><th>Phone</th><th>Offset</th><th></th></tr>${
+    sorted.map(p => `<tr><td>${p.aperture} ${p.shutter}${p.meterShows ? ' (' + fmtDev(p.meterShows) + ')' : ''} · ${p.iso}</td><td>${p.evRef.toFixed(1)}</td><td>${p.evRaw.toFixed(1)}</td><td>${sgn(p.offset, 1)}</td><td><button class="x" data-del="${p.i}" aria-label="Delete point">×</button></td></tr>`).join('')
+  }</table><dl class="kv"><dt>Average offset</dt><dd>${sgn(s.mean, 2)} stops</dd><dt>Spread (SD)</dt><dd>${s.sd} stops</dd>${
+    s.phoneEVperEV != null ? `<dt>Phone EV per real EV (1 = ideal)</dt><dd>${s.phoneEVperEV}</dd>` : ''}</dl>`;
+  b.className = 'badge ' + (s.n >= 3 && s.sd <= 0.33 ? 'ok' : 'warn');
+  b.textContent = `${s.n} pt${s.n === 1 ? '' : 's'} · ±${s.sd}`;
+}
+
+/* Verdict & report ------------------------------------------------ */
+function verdict() {
+  const sw = st.results.sweep, ae = st.results.ae, cs = calSummary();
+  const vT = sw ? sweepVerdict(judged(sw.fitTime, sw.fitTimeMid)) : { cls: 'idle', txt: 'Not run' };
+  const vS = sw && sw.iso.length ? sweepVerdict(judged(sw.fitIso, sw.fitIsoMid)) : { cls: 'idle', txt: sw ? 'Not available' : 'Not run' };
+  const vA = aeVerdict(ae);
+  const items = [
+    ['Camera opens (1)', st.track ? { cls: 'ok', txt: 'Yes' } : { cls: 'idle', txt: 'Not started' }],
+    ['Manual exposure offered (1)', !st.track ? { cls: 'idle', txt: '—' } : st.canLock ? { cls: 'ok', txt: 'Yes' } : { cls: 'bad', txt: 'No' }],
+    ['Shutter lock (2)', vT],
+    ['ISO lock (2)', vS],
+    ['Live auto-exposure values (3)', vA],
+    ['Calibration spread (Calibrate)', cs ? { cls: cs.n >= 3 && cs.sd <= 0.33 ? 'ok' : 'warn', txt: `${cs.n} pts ±${cs.sd}` } : { cls: 'idle', txt: 'No points' }],
+  ];
+  let overall;
+  if (!st.track) overall = 'Start the camera to begin.';
+  else if (!st.canLock && vA.cls === 'ok') overall = 'No exposure lock, but live auto-exposure values work. The browser can meter in Auto; the native module should do Locked.';
+  else if (!st.canLock) overall = 'Chrome offers no manual exposure on this camera. The native module has to do all the metering.';
+  else if (!sw) overall = 'Run test 2 to finish.';
+  else if (vT.cls === 'ok') overall = 'Browser metering works on this phone. The native module becomes an upgrade (incident light, lens choice), not a requirement.';
+  else if (vT.cls === 'warn' && vT.txt === 'Non-linear') overall = 'Browser metering works with a correction (slope k). The native module will be more accurate.';
+  else overall = 'Chrome accepts the settings but the image doesn\'t follow them. The native module has to do the metering.';
+  return { items, overall };
+}
+function renderVerdict() {
+  const v = verdict();
+  $('#verdict').innerHTML = v.items.map(([k, b]) => `<li><span>${k}</span><span class="badge ${b.cls}">${esc(b.txt)}</span></li>`).join('');
+  $('#overall').textContent = v.overall;
+}
+
+async function buildReport() {
+  let uaData = null;
+  try { if (navigator.userAgentData && navigator.userAgentData.getHighEntropyValues) uaData = await navigator.userAgentData.getHighEntropyValues(['model', 'platformVersion', 'fullVersionList']); } catch {}
+  const strip = o => { const r = { ...o }; delete r.deviceId; delete r.groupId; return r; };
+  let photoCaps = null;
+  try { photoCaps = st.ic ? await st.ic.getPhotoCapabilities() : null; } catch (e) { photoCaps = { error: e.name }; }
+  let caps = null, settings = null;
+  try { caps = st.track ? strip(st.track.getCapabilities()) : null; } catch {}
+  try { settings = st.track ? strip(st.track.getSettings()) : null; } catch {}
+  const v = verdict();
+  const { deviceId, ...config } = cfg;
+  return {
+    tool: 'SwissArmyPhotoKnife camera test', version: VERSION, at: new Date().toISOString(),
+    userAgent: navigator.userAgent, uaData, secureContext: window.isSecureContext,
+    camera: st.track ? st.track.label : null, cameras: st.cameras.map(c => c.label),
+    previewFps: +st.fps.toFixed(1), capabilities: caps, settings, photoCapabilities: photoCaps,
+    canLock: st.canLock, lockEffective: st.lockOK, config,
+    tests: { sweep: st.results.sweep || null, autoExposure: st.results.ae || null, scan: st.results.scan || null },
+    calibration: { summary: calSummary(), points: cal },
+    logbook: { cameras: lb.cameras.length, rolls: lb.rolls.length, shots: shots.length },
+    verdict: { items: v.items.map(([k, b]) => ({ test: k, result: b.txt })), overall: v.overall },
+    log: st.log.slice(-60),
+  };
+}
+const reportName = () => `sapk-camera-test-${new Date().toISOString().slice(0, 16).replace(/[:T]/g, '-')}.json`;
+// A download in a browser; the system "save as" sheet in the installed app, where web views can't download.
+// Resolves false if the user backs out of the sheet.
+async function saveTextFile(name, text, mime = 'application/json') {
+  if (Shell) return (await Shell.saveFile({ name, text, mime })).saved;
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([text], { type: mime }));
+  a.download = name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+  return true;
+}
+async function reportAction(kind) {
+  const status = $('#reportStatus');
+  const json = JSON.stringify(await buildReport(), null, 2);
+  const ta = $('#reportText');
+  try {
+    if (kind === 'share') {
+      if (Shell) await Shell.shareFile({ name: reportName(), text: json, title: 'SAPK camera test' });
+      else if (!navigator.share) throw new Error('Sharing not available here');
+      else await navigator.share({ title: 'SAPK camera test', text: json });
+      status.textContent = 'Shared.';
+      track('Report shared');
+    } else if (kind === 'copy') {
+      await navigator.clipboard.writeText(json);
+      status.textContent = 'Copied. Paste it into the chat.';
+    } else {
+      status.textContent = await saveTextFile(reportName(), json) ? 'Downloaded.' : '';
+    }
+  } catch (e) {
+    if (e.name === 'AbortError') { status.textContent = ''; return; }
+    status.textContent = (e.message || 'That didn\'t work') + ' — select the text below and copy it.';
+    ta.hidden = false; ta.value = json; ta.focus(); ta.select();
+  }
+}
+
+function enableTests(on) {
+  $('#btnSweep').disabled = !on || !st.canLock;
+  $('#btnAE').disabled = !on;
+  $('#btnScan').disabled = !on;
+  $('#btnCalRec').disabled = !on;
+}
+
+/* ================================================================
+   Controls
+   ================================================================ */
+function makeRuler(el, values, { format, major, initial, onChange }) {
+  const track = $('.ruler-track', el), inner = $('.ruler-inner', el), valEl = $('.ruler-value', el);
+  const W = 28;
+  let vals = values, idx = 0;
+  const nearest = v => vals.reduce((b, x, i) => Math.abs(x - v) < Math.abs(vals[b] - v) ? i : b, 0);
+  const build = () => {
+    inner.innerHTML = vals.map((v, i) => `<div class="tick${major(v, i) ? ' major' : ''}" data-i="${i}">${major(v, i) ? `<span>${v}</span>` : ''}</div>`).join('');
+    track.setAttribute('aria-valuemin', vals[0]);
+    track.setAttribute('aria-valuemax', vals[vals.length - 1]);
+  };
+  const show = () => {
+    valEl.textContent = format(vals[idx]);
+    track.setAttribute('aria-valuenow', vals[idx]);
+    track.setAttribute('aria-valuetext', format(vals[idx]));
+  };
+  const sync = () => { track.scrollLeft = idx * W; };
+  const setIdx = (i, scroll) => {
+    i = clamp(i, 0, vals.length - 1);
+    const changed = i !== idx; idx = i; show();
+    if (scroll) track.scrollTo({ left: idx * W, behavior: 'smooth' });
+    if (changed) onChange(vals[idx]);
+  };
+  track.addEventListener('scroll', () => {
+    const i = clamp(Math.round(track.scrollLeft / W), 0, vals.length - 1);
+    if (i !== idx) { idx = i; show(); onChange(vals[idx]); }
+  }, { passive: true });
+  track.addEventListener('keydown', e => {
+    if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') { setIdx(idx - 1, true); e.preventDefault(); }
+    if (e.key === 'ArrowRight' || e.key === 'ArrowUp') { setIdx(idx + 1, true); e.preventDefault(); }
+  });
+  inner.addEventListener('click', e => { const t = e.target.closest('.tick'); if (t) setIdx(+t.dataset.i, true); });
+  build(); idx = nearest(initial); show();
+  requestAnimationFrame(sync);
+  if (document.fonts) document.fonts.ready.then(sync);
+  return {
+    // Move without calling onChange (the caller has already updated its state)
+    setValue(v) { idx = nearest(v); show(); sync(); },
+    setValues(nv, v) { vals = nv; build(); idx = nearest(v); show(); sync(); },
+  };
+}
+
+const rulers = {};
+let saveTimer = null;
+const saveSoon = () => { clearTimeout(saveTimer); saveTimer = setTimeout(() => store.save(), 300); };
+
+function initControls() {
+  rulers.iso = makeRuler($('#rulerIso'), ISOS, {
+    format: v => String(v), major: (v, i) => i % 3 === 0, initial: cfg.iso,
+    onChange: v => { cfg.iso = v; calIsoNote(); saveSoon(); renderUI(true); },
+  });
+  rulers.focal = makeRuler($('#rulerLens'), focalValues(), {
+    format: v => v + 'mm',
+    major: v => FOCAL_MAJOR.has(v) || lb.cameras.some(c => c.lenses.some(l => l.focal === v)),
+    initial: cfg.focal,
+    onChange: v => { cfg.focal = v; st.ly = null; saveSoon(); renderUI(true); },
+  });
+
+  // Tabs
+  document.querySelectorAll('.tab').forEach(t => t.addEventListener('click', () => selectTab(t)));
+
+  // Hold
+  $('#btnHold').addEventListener('click', () => {
+    st.hold = !st.hold;
+    st.heldEV = st.hold ? currentEV() : null;
+    if (st.hold && st.heldEV == null) {
+      st.hold = false;
+      explain('Nothing to hold yet', 'Hold freezes the reading once there is one. Wait for the number to appear.');
+    } else if (st.hold) {
+      explain('Reading held', 'The number and the aperture/shutter pairs are frozen, so you can lower the phone and set your camera. Tap the red number again to go live.');
+    } else {
+      explain('Live again', 'The reading follows the scene again.', 2000);
+    }
+    $('#btnHold').setAttribute('aria-pressed', st.hold);
+    renderUI(true);
+  });
+
+  // Mode: explain what each one does every time it's tapped
+  $('#modeLocked').addEventListener('click', () => {
+    if (!st.canLock && st.track) { explain('Locked unavailable', 'Chrome doesn\'t let the page set this camera\'s exposure, so only Auto is possible here.'); return; }
+    explain('Locked', MODE_TEXT.locked());
+    if (st.track && !st.testing) setMode('locked');
+  });
+  $('#modeAuto').addEventListener('click', () => {
+    explain('Auto', MODE_TEXT.auto());
+    if (st.track && !st.testing) setMode('auto');
+  });
+  $('#explain').addEventListener('click', () => { $('#explain').hidden = true; });
+
+  // Camera on/off, capture, shots
+  $('#btnCam').addEventListener('click', () => { if (st.track) stopCamera(); else startFromUI(); });
+  $('#btnShoot').addEventListener('click', captureShot);
+  $('#btnShots').addEventListener('click', () => { selectTab($('#tShots')); $('#pShots').scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+
+  // Pairs
+  $('#pairs').addEventListener('click', e => {
+    const a = e.target.closest('[data-ap]');
+    if (a) { lockAperture(+a.dataset.ap); return; }
+    const b = e.target.closest('[data-sh]');
+    if (b && b.dataset.sh !== '' && !b.disabled) lockShutter(+b.dataset.sh);
+  });
+  const shownPair = () => currentPair(st.hold ? st.heldEV : currentEV());
+  $('#tokAp').addEventListener('click', () => {
+    const cp = shownPair(); if (!cp) return;
+    if (cfg.pairLock === 'ap') releasePair(); else lockAperture(cp.row);
+  });
+  $('#tokSh').addEventListener('click', () => {
+    const cp = shownPair(); if (!cp) return;
+    if (cfg.pairLock === 'sh') releasePair(); else lockShutter(cp.k);
+  });
+
+  // Spot metering: tap a grid cell
+  view.addEventListener('click', e => {
+    const r = view.getBoundingClientRect();
+    const cx = clamp(Math.floor(3 * (e.clientX - r.left) / r.width), 0, 2);
+    const cy = clamp(Math.floor(3 * (e.clientY - r.top) / r.height), 0, 2);
+    const i = cy * 3 + cx;
+    st.spot = st.spot === i ? null : i;
+    st.ly = null; st.outCount = 0;
+    renderUI(true);
+  });
+
+  // Start
+  $('#btnStart').addEventListener('click', startFromUI);
+
+  // Tests
+  $('#btnSweep').addEventListener('click', runSweep);
+  $('#btnAE').addEventListener('click', runAE);
+  $('#btnScan').addEventListener('click', scanCameras);
+  $('#btnUseK').addEventListener('click', () => {
+    const R = st.results.sweep; if (!R) return;
+    const k = judged(R.fitTime, R.fitTimeMid).slope; if (!k) return;
+    cfg.k = +k.toFixed(2); $('#inK').value = cfg.k; store.save(); $('#btnUseK').hidden = true; renderUI(true);
+  });
+  $('#btnShare').addEventListener('click', () => reportAction('share'));
+  $('#btnCopy').addEventListener('click', () => reportAction('copy'));
+  $('#btnDownload').addEventListener('click', () => reportAction('download'));
+
+  // Calibration
+  $('#calAp').innerHTML = AP_THIRDS.map((a, i) => `<option value="${i}"${i === cfg.calAp ? ' selected' : ''}>f/${a}</option>`).join('');
+  $('#calSh').innerHTML = SHUTTERS.map(([k, l]) => `<option value="${k}"${k === cfg.calSh3 ? ' selected' : ''}>${l}</option>`).join('');
+  $('#calDev').innerHTML = METER_DEV.map(v => `<option value="${v}"${Math.abs(v - cfg.calDev) < 0.01 ? ' selected' : ''}>${v === 0 ? '0.0 (centred)' : fmtDev(v)}</option>`).join('');
+  $('#calAp').addEventListener('change', e => { cfg.calAp = +e.target.value; saveSoon(); });
+  $('#calSh').addEventListener('change', e => { cfg.calSh3 = +e.target.value; saveSoon(); });
+  $('#calDev').addEventListener('change', e => { cfg.calDev = +e.target.value; saveSoon(); });
+  $('#btnCalRec').addEventListener('click', recordCal);
+  $('#btnCalApply').addEventListener('click', () => {
+    const s = calSummary(); if (!s) return;
+    cfg.C = s.mean; $('#inC').value = cfg.C; store.save(); renderUI(true);
+    $('#calStatus').textContent = `Offset C set to ${sgn(cfg.C, 2)} stops.`;
+  });
+  $('#btnCalClear').addEventListener('click', () => {
+    if (!confirm('Delete all calibration points?')) return;
+    cal = []; store.save(); renderCal(); renderVerdict();
+  });
+  $('#calOut').addEventListener('click', e => {
+    const b = e.target.closest('[data-del]'); if (!b) return;
+    cal.splice(+b.dataset.del, 1); store.save(); renderCal(); renderVerdict();
+  });
+
+  // Setup
+  $('#selCam').addEventListener('change', async e => {
+    if (!st.track) return;
+    try { await startCamera(e.target.value); } catch (err) { logMsg('Switch failed: ' + err.name); }
+  });
+  const num = (id, key, lo, hi) => {
+    const el = $(id); el.value = cfg[key];
+    el.addEventListener('change', () => {
+      const v = parseFloat(el.value);
+      if (isFinite(v)) { cfg[key] = clamp(v, lo, hi); el.value = cfg[key]; st.ly = key === 'phoneEq' ? null : st.ly; saveSoon(); renderUI(true); }
+      else el.value = cfg[key];
+    });
+  };
+  num('#inN', 'N', 0.8, 8); num('#inEq', 'phoneEq', 10, 120); num('#inK', 'k', 0.3, 2); num('#inC', 'C', -6, 6);
+  $('#btnResetCfg').addEventListener('click', () => {
+    Object.assign(cfg, { N: DEFAULTS.N, phoneEq: DEFAULTS.phoneEq, k: DEFAULTS.k, C: DEFAULTS.C });
+    ['N', 'phoneEq', 'k', 'C'].forEach(k => { $({ N: '#inN', phoneEq: '#inEq', k: '#inK', C: '#inC' }[k]).value = cfg[k]; });
+    store.save(); renderUI(true);
+  });
+
+  calIsoNote();
+}
+function selectTab(t) {
+  document.querySelectorAll('.tab').forEach(o => {
+    o.setAttribute('aria-selected', o === t);
+    $('#' + o.getAttribute('aria-controls')).hidden = o !== t;
+  });
+  renderUI(true);
+}
+
+async function startFromUI() {
+  const msg = $('#startMsg');
+  msg.classList.remove('err');
+  $('#startPane').hidden = false;
+  if (!window.isSecureContext) { msg.textContent = 'This page has to be opened over HTTPS for Chrome to allow the camera.'; msg.classList.add('err'); return; }
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { msg.textContent = 'This browser has no camera access for web pages.'; msg.classList.add('err'); return; }
+  $('#btnStart').disabled = true; $('#btnCam').disabled = true;
+  msg.textContent = 'Opening camera…';
+  try { await startCamera(cfg.deviceId); }
+  catch (e) {
+    msg.textContent = e.name === 'NotAllowedError' ? (NATIVE ? 'Camera permission was refused. Allow it in Android settings, Apps, SwissArmyPhotoKnife, Permissions, then try again.' : 'Camera permission was refused. Allow it in Chrome\'s site settings and try again.') : 'Could not open the camera: ' + e.name;
+    msg.classList.add('err');
+    logMsg('Start failed: ' + e.name + ' ' + (e.message || ''));
+  } finally {
+    $('#btnStart').disabled = false; $('#btnCam').disabled = false;
+    renderUI(true);
+  }
+}
+
+// Turn the phone camera off (saves battery); readings stop until it's started again
+function stopCamera() {
+  stopStream();
+  st.ly = null; st.region = null; st.cur = { t: null, S: null };
+  st.hold = false; st.heldEV = null; $('#btnHold').setAttribute('aria-pressed', false);
+  try { if (st.wake) st.wake.release(); } catch {}
+  st.wake = null;
+  if (Shell) Shell.keepAwake({ on: false }).catch(() => {});
+  vctx.clearRect(0, 0, view.width, view.height);
+  $('#startMsg').classList.remove('err');
+  $('#startMsg').textContent = 'Camera off. Start it again when you\'re ready to meter.';
+  $('#startPane').hidden = false;
+  enableTests(false);
+  logMsg('Camera stopped');
+  renderUI(true);
+}
+
+/* ================================================================
+   Logbook: capture, note sheet, rolls, gear
+   ================================================================ */
+const camById = id => lb.cameras.find(c => c.id === id) || null;
+const allFilms = () => [...lb.films, ...FILMS_BUILTIN];
+const filmById = id => allFilms().find(f => f.id === id) || null;
+const rollById = id => lb.rolls.find(r => r.id === id) || null;
+const rollShots = id => shots.filter(s => s.rollId === id);
+const loadedRollOf = camId => lb.rolls.find(r => r.cameraId === camId && r.status === 'loaded') || null;
+function activeRoll() { const r = rollById(lb.activeRollId); return r && r.status === 'loaded' ? r : null; }
+const cameraName = r => { const c = camById(r.cameraId); return c ? c.name : (r.cameraName || 'Camera'); };
+const rollName = r => `${cameraName(r)} · ${r.filmName} @ ${r.ratedIso}`;
+function nextFrame(roll, exceptId) {
+  const fs = rollShots(roll.id).filter(s => String(s.id) !== String(exceptId) && s.frame != null).map(s => s.frame);
+  return fs.length ? Math.max(...fs) + 1 : 1;
+}
+const lensLabel = l => `${l.focal}mm${l.maxAp ? ' f/' + l.maxAp : ''}`;
+function lensOf(s) { for (const c of lb.cameras) { const l = c.lenses.find(x => x.id === s.lensId); if (l) return l; } return null; }
+const fmtDate = iso => new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
+const fmtWhen = iso => { const d = new Date(iso); return fmtDate(iso) + ' ' + d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' }); };
+function stopsText(x) {
+  const n = Math.round(Math.abs(x) * 3), w = Math.floor(n / 3), r = n % 3;
+  return ((w ? String(w) : '') + (r === 1 ? '⅓' : r === 2 ? '⅔' : '')) || '0';
+}
+function pushPull(rated, box) {
+  const d = log2(rated / box);
+  if (Math.abs(d) < 0.15) return 'box speed';
+  return d > 0 ? `push +${stopsText(d)}` : `pull −${stopsText(d)}`;
+}
+const fmtOptions = sel => Object.entries(FORMATS).map(([k, f]) => `<option value="${k}"${k === sel ? ' selected' : ''}>${f.label}</option>`).join('');
+
+// Settings actually used: aperture in thirds (N = 2^(i/6)), shutter in thirds (t = 2^(k/3)) or 'B'
+const AP_USED = AP_THIRDS.map((l, i) => [i, l]).concat([[31, '36'], [32, '40'], [33, '45'], [34, '51'], [35, '57'], [36, '64']]);
+const apLabel = i => 'f/' + ((AP_USED.find(a => a[0] === i) || [0, '?'])[1]);
+const shLabel = k => k === 'B' ? 'B' : ((SHUTTERS.find(x => x[0] === k) || [0, '?'])[1]);
+function usedFromLabels(ap, sh) {   // for shots saved before v0.3
+  const a = AP_USED.find(x => 'f/' + x[1] === ap);
+  let k3 = (SHUTTERS.find(x => x[1] === sh) || [])[0];
+  const m = /^(\d+)s$/.exec(sh || '');
+  if (k3 == null && m) { const v = Math.round(3 * log2(+m[1])); k3 = v <= 15 ? v : 'B'; }
+  return { apI: a ? a[0] : 18, shK3: k3 != null ? k3 : 'B' };
+}
+function migrateShot(s) {
+  if (!('rollId' in s)) s.rollId = null;
+  if (!('frame' in s)) s.frame = null;
+  if (!('lensId' in s)) s.lensId = null;
+  if (typeof s.notes !== 'string') s.notes = '';
+  if (!('location' in s)) s.location = null;
+  if (!s.used) s.used = usedFromLabels(s.aperture, s.shutter);
+  return s;
+}
+// Default lens: the camera lens matching the Lens ruler, else the one used last on this roll, else the first
+function defaultLens(roll) {
+  const cam = roll && camById(roll.cameraId);
+  if (!cam || !cam.lenses.length) return null;
+  const byFocal = cam.lenses.find(l => l.focal === cfg.focal);
+  if (byFocal) return byFocal;
+  const last = rollShots(roll.id).find(s => s.lensId);
+  return cam.lenses.find(l => last && l.id === last.lensId) || cam.lenses[0];
+}
+
+function captureShot() {
+  const ev = st.hold ? st.heldEV : currentEV();
+  if (!st.track || ev == null) { explain('No reading yet', 'Wait for the EV number to appear, then capture.'); return; }
+  const evIso = Meter.evAtIso(ev, cfg.iso);
+  const cp = currentPair(ev);
+  let img = null;
+  try {   // small greyscale thumbnail of the metered area
+    const c = st.crop, L = 320;
+    const w = c.w >= c.h ? L : Math.round(L * c.w / c.h), h = c.h >= c.w ? L : Math.round(L * c.h / c.w);
+    const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+    const x = cv.getContext('2d'); x.filter = 'grayscale(1)';
+    x.drawImage(video, c.x, c.y, c.w, c.h, 0, 0, w, h);
+    img = cv.toDataURL('image/jpeg', 0.72);
+  } catch {}
+  const roll = activeRoll();
+  const lens = defaultLens(roll);
+  const shot = {
+    id: uid(), at: new Date().toISOString(), img,
+    rollId: roll ? roll.id : null, frame: roll ? nextFrame(roll) : null, lensId: lens ? lens.id : null,
+    format: cfg.format, focal: cfg.focal, iso: cfg.iso,
+    ev100: +ev.toFixed(2), evIso: +evIso.toFixed(2), aperture: cp.apLabel, shutter: cp.shLabel, pairLock: cp.lock,
+    used: { apI: cp.apI3, shK3: cp.shK3 }, notes: '', location: null,
+    held: st.hold, mode: st.mode, spot: st.spot != null,
+    phone: { t: st.cur.t, S: st.cur.S, Y: st.ly != null ? +(2 ** st.ly).toFixed(4) : null, N: cfg.N, k: cfg.k, C: cfg.C },
+  };
+  shots.unshift(shot);
+  persistShot(shot);
+  track('Shot saved', { roll: roll ? 'yes' : 'no' });
+  if (cfg.saveLoc) fetchLocation(shot);
+  const f = $('#finder'); f.classList.remove('flash'); void f.offsetWidth; f.classList.add('flash');
+  try { if (navigator.vibrate) navigator.vibrate(25); } catch {}
+  if (cfg.notesOnCapture) openNoteSheet(shot.id);
+  else explain(roll ? `Frame ${shot.frame} logged` : 'Shot saved',
+    roll ? `${shot.aperture} · ${shot.shutter} on ${r_name(roll)}. Add notes any time from the Logbook.`
+         : `${shot.aperture} · ${shot.shutter}. No roll is loaded, so it's under “Not on a roll” in the Logbook.`, 3500);
+  renderLogbook(); renderBars();
+}
+const r_name = r => `${cameraName(r)}, ${r.filmName}`;
+
+function fetchLocation(s) {
+  if (!('geolocation' in navigator)) { s.locError = 'No GPS in this browser'; return; }
+  s.locPending = true; s.locError = null;
+  updateLocUI(s);
+  navigator.geolocation.getCurrentPosition(pos => {
+    s.locPending = false;
+    s.location = { lat: +pos.coords.latitude.toFixed(6), lon: +pos.coords.longitude.toFixed(6), acc: Math.round(pos.coords.accuracy), at: new Date(pos.timestamp).toISOString() };
+    persistShot(s); updateLocUI(s); renderLogbook();
+  }, err => {
+    s.locPending = false;
+    s.locError = err.code === 1 ? 'Location permission refused' : 'Location not available';
+    updateLocUI(s);
+  }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 30000 });
+}
+function updateLocUI(s) {
+  const el = document.getElementById('nsLoc');
+  if (!el || st.sheetShotId !== s.id) return;
+  if (s.location) {
+    const { lat, lon, acc } = s.location;
+    el.innerHTML = `<span>${lat.toFixed(5)}, ${lon.toFixed(5)} · ±${acc} m</span>
+      <a href="https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=17/${lat}/${lon}" target="_blank" rel="noopener">Map</a>
+      <button type="button" class="linkbtn" data-loc="rm">Remove</button>`;
+  } else if (s.locPending) {
+    el.textContent = 'Getting location…';
+  } else {
+    el.innerHTML = `${s.locError ? `<span>${esc(s.locError)} ·</span>` : '<span>None ·</span>'} <button type="button" class="linkbtn" data-loc="add">Add where you are now</button>`;
+  }
+}
+
+/* Bottom sheet ---------------------------------------------------- */
+const sheet = document.getElementById('sheet');
+function openSheet(title, html, mount) {
+  $('#sheetTitle').textContent = title;
+  const body = $('#sheetBody');
+  body.innerHTML = `<div>${html}</div>`;
+  body.scrollTop = 0;
+  if (!sheet.open) sheet.showModal();
+  if (mount) mount(body.firstElementChild);
+}
+function closeSheet() { if (sheet.open) sheet.close(); }
+// Android back button in the installed app: close an open sheet first. False lets the app step into the background.
+window.__sapkBack = () => { if (!sheet.open) return false; closeSheet(); return true; };
+
+/* Note sheet: everything about one shot --------------------------- */
+let shotSaveTimer = null;
+function saveShotSoon(s) { clearTimeout(shotSaveTimer); shotSaveTimer = setTimeout(() => persistShot(s), 400); }
+
+function openNoteSheet(id) {
+  const s = shots.find(x => String(x.id) === String(id));
+  if (!s) return;
+  migrateShot(s);
+  st.sheetShotId = s.id;
+  const rolls = lb.rolls.filter(r => r.status === 'loaded' || r.id === s.rollId);
+  const rollOpts = '<option value="">Not on a roll</option>' + rolls.map(r =>
+    `<option value="${r.id}"${r.id === s.rollId ? ' selected' : ''}>${esc(rollName(r))}${r.status !== 'loaded' ? ' (' + ROLL_STATUS[r.status].toLowerCase() + ')' : ''}</option>`).join('');
+  const apOpts = AP_USED.map(([i, l]) => `<option value="${i}"${i === s.used.apI ? ' selected' : ''}>f/${l}</option>`).join('');
+  const shOpts = SHUTTERS.map(([k, l]) => `<option value="${k}"${k === s.used.shK3 ? ' selected' : ''}>${l}</option>`).join('')
+    + `<option value="B"${s.used.shK3 === 'B' ? ' selected' : ''}>B (bulb)</option>`;
+  const html = `
+    <div class="meterline">${s.img ? `<img src="${s.img}" alt="Metered frame">` : '<img alt="">'}<div>
+      <div class="s-top">Meter said · ${esc(fmtWhen(s.at))}</div>
+      <div class="s-pair">${esc(s.aperture)} · ${esc(s.shutter)}</div>
+      <div class="s-meta">EV₁₀₀ ${s.ev100.toFixed(1)} · ISO ${s.iso} · ${s.focal}mm${s.spot ? ' · spot' : ''}${s.held ? ' · held' : ''}</div>
+    </div></div>
+    <label class="field"><span>Roll</span><select id="nsRoll">${rollOpts}</select></label>
+    <div class="row2">
+      <div class="field plain"><span class="lbl">Frame</span>
+        <div class="stepper"><button type="button" data-step="-1" aria-label="Previous frame">−</button><input type="number" id="nsFrame" inputmode="numeric" min="0" max="99" aria-label="Frame number"><button type="button" data-step="1" aria-label="Next frame">+</button></div>
+        <div class="note" id="nsDup"></div></div>
+      <label class="field"><span>Lens</span><select id="nsLens"></select></label>
+    </div>
+    <div class="row2">
+      <label class="field"><span>Aperture used</span><select id="nsAp">${apOpts}</select></label>
+      <label class="field"><span>Shutter used</span><select id="nsSh">${shOpts}</select></label>
+    </div>
+    <div class="diff" id="nsDiff"></div>
+    <div class="field plain"><span class="lbl">Location</span><div class="locline" id="nsLoc"></div></div>
+    <label class="field"><span>Notes</span><textarea class="notes" id="nsNotes" placeholder="What are you testing or playing with? Filter, push, light, subject…"></textarea></label>
+    <label class="check"><input type="checkbox" id="nsAuto"${cfg.notesOnCapture ? ' checked' : ''}> <span>Open this after every capture<small>Off: shots save quietly and you add notes later from the Logbook.</small></span></label>
+    <div class="btns"><button class="btn white" id="nsDone">Done</button><button class="btn" id="nsDel">Delete shot</button></div>`;
+  openSheet(s.frame != null && s.rollId ? `Frame ${s.frame}` : 'Shot', html, b => {
+    const q = sel => b.querySelector(sel);
+    const title = () => { $('#sheetTitle').textContent = s.frame != null && s.rollId ? `Frame ${s.frame}` : 'Shot'; };
+    const fillLens = () => {
+      const roll = rollById(s.rollId), cam = roll && camById(roll.cameraId);
+      const groups = cam ? [cam] : lb.cameras;
+      q('#nsLens').innerHTML = '<option value="">Not recorded</option>' + groups.map(c => c.lenses.map(l =>
+        `<option value="${l.id}"${l.id === s.lensId ? ' selected' : ''}>${cam ? '' : esc(c.name) + ' · '}${esc(lensLabel(l))}</option>`).join('')).join('');
+    };
+    const dup = () => {
+      const clash = s.rollId && s.frame != null && rollShots(s.rollId).some(o => o.id !== s.id && o.frame === s.frame);
+      q('#nsDup').textContent = clash ? `Frame ${s.frame} is already logged on this roll.` : '';
+    };
+    const diff = () => {
+      const el = q('#nsDiff');
+      if (s.used.shK3 === 'B') { el.textContent = 'Bulb: note the time you held it open.'; el.className = 'diff'; return; }
+      const eu = log2((2 ** (s.used.apI / 6)) ** 2 / 2 ** (s.used.shK3 / 3));
+      const d = s.evIso - eu;   // > 0: these settings give more light than the exact reading
+      el.className = 'diff' + (Math.abs(d) >= 0.17 ? ' off' : '');
+      el.textContent = Math.abs(d) < 0.17 ? 'Matches the exact reading.'
+        : `${d > 0 ? '+' : '−'}${stopsText(d)} stop ${d > 0 ? 'more' : 'less'} light than the exact reading.`;
+    };
+    q('#nsFrame').value = s.frame != null ? s.frame : '';
+    q('#nsNotes').value = s.notes || '';
+    fillLens(); dup(); diff(); updateLocUI(s);
+
+    q('#nsRoll').addEventListener('change', e => {
+      s.rollId = e.target.value || null;
+      s.frame = s.rollId ? nextFrame(rollById(s.rollId), s.id) : null;
+      const l = defaultLens(rollById(s.rollId));
+      s.lensId = l ? l.id : null;
+      q('#nsFrame').value = s.frame != null ? s.frame : '';
+      fillLens(); dup(); title(); persistShot(s);
+    });
+    q('#nsFrame').addEventListener('input', e => {
+      const v = parseInt(e.target.value, 10);
+      s.frame = isFinite(v) ? clamp(v, 0, 99) : null;
+      dup(); title(); saveShotSoon(s);
+    });
+    b.querySelectorAll('[data-step]').forEach(btn => btn.addEventListener('click', () => {
+      s.frame = clamp((s.frame != null ? s.frame : 0) + +btn.dataset.step, 0, 99);
+      q('#nsFrame').value = s.frame; dup(); title(); saveShotSoon(s);
+    }));
+    q('#nsLens').addEventListener('change', e => { s.lensId = e.target.value || null; persistShot(s); });
+    q('#nsAp').addEventListener('change', e => { s.used.apI = +e.target.value; diff(); persistShot(s); });
+    q('#nsSh').addEventListener('change', e => { s.used.shK3 = e.target.value === 'B' ? 'B' : +e.target.value; diff(); persistShot(s); });
+    q('#nsNotes').addEventListener('input', e => { s.notes = e.target.value; s.notedAt = new Date().toISOString(); saveShotSoon(s); });
+    q('#nsLoc').addEventListener('click', e => {
+      const a = e.target.closest('[data-loc]'); if (!a) return;
+      if (a.dataset.loc === 'rm') { s.location = null; persistShot(s); updateLocUI(s); }
+      else fetchLocation(s);
+    });
+    q('#nsAuto').addEventListener('change', e => { cfg.notesOnCapture = e.target.checked; $('#setNotes').checked = cfg.notesOnCapture; store.save(); });
+    q('#nsDone').addEventListener('click', closeSheet);
+    q('#nsDel').addEventListener('click', () => {
+      if (!confirm('Delete this shot?')) return;
+      removeShot(s.id); closeSheet();
+    });
+  });
+}
+
+/* What are you shooting? (pick the active roll) ------------------- */
+function activateRoll(id) {
+  lb.activeRollId = id || null;
+  saveLB();
+  const r = activeRoll();
+  if (r) {
+    const cam = camById(r.cameraId);
+    cfg.iso = r.ratedIso; rulers.iso.setValue(cfg.iso);
+    if (cam) {
+      cfg.format = cam.format;
+      const lens = defaultLens(r);
+      if (lens && lens.focal !== cfg.focal) { cfg.focal = lens.focal; rulers.focal.setValue(cfg.focal); }
+    }
+    calIsoNote(); store.save(); st.ly = null;
+  }
+  renderUI(true); renderLogbook(); renderGear();
+}
+
+function openRollPicker() {
+  const loaded = lb.rolls.filter(r => r.status === 'loaded');
+  const cur = activeRoll();
+  const html = `
+    ${loaded.map(r => `<button class="pick" data-roll="${r.id}" aria-current="${!!cur && cur.id === r.id}"><b>${esc(cameraName(r))}</b><span>${esc(r.filmName)} @ ${r.ratedIso} · next frame ${nextFrame(r)} of ${r.exposures}</span></button>`).join('')
+      || '<div class="empty">No rolls loaded yet.</div>'}
+    <button class="pick" data-roll="" aria-current="${!cur}"><b>No camera selected</b><span>Just metering; shots aren't added to a roll</span></button>
+    ${cur ? '' : `<label class="field"><span>Film format to meter for</span><select id="rpFmt">${fmtOptions(cfg.format)}</select></label>`}
+    <div class="btns"><button class="btn white" id="rpLoad">Load a roll</button><button class="btn" id="rpGear">My cameras</button></div>`;
+  openSheet('What are you shooting?', html, b => {
+    b.addEventListener('click', e => {
+      const p = e.target.closest('[data-roll]'); if (!p) return;
+      activateRoll(p.dataset.roll);
+      if (p.dataset.roll) closeSheet(); else openRollPicker();
+    });
+    const fmt = b.querySelector('#rpFmt');
+    if (fmt) fmt.addEventListener('change', e => { cfg.format = e.target.value; st.ly = null; store.save(); renderUI(true); });
+    b.querySelector('#rpLoad').addEventListener('click', () => openLoadRoll());
+    b.querySelector('#rpGear').addEventListener('click', () => { closeSheet(); selectTab($('#tGear')); $('#pGear').scrollIntoView({ behavior: 'smooth', block: 'start' }); });
+  });
+}
+
+/* Load a roll ----------------------------------------------------- */
+function openLoadRoll(pre = {}) {
+  if (!lb.cameras.length) { openCameraEditor(null, cam => openLoadRoll({ ...pre, cameraId: cam.id }), 'Add your camera first'); return; }
+  const act = activeRoll();
+  const camId = pre.cameraId || (act && act.cameraId) || lb.cameras[0].id;
+  const filmId = pre.filmId || cfg.lastFilmId;
+  const opt = f => `<option value="${f.id}"${f.id === filmId ? ' selected' : ''}>${esc(f.name)}</option>`;
+  const filmOpts = (lb.films.length ? `<optgroup label="My films">${lb.films.map(opt).join('')}</optgroup>` : '')
+    + Object.entries(FILM_TYPES).map(([t, label]) => `<optgroup label="${label}">${FILMS_BUILTIN.filter(f => f.type === t).map(opt).join('')}</optgroup>`).join('');
+  const html = `
+    <label class="field"><span>Camera</span><select id="lrCam">${lb.cameras.map(c => `<option value="${c.id}"${c.id === camId ? ' selected' : ''}>${esc(c.name)} · ${FORMATS[c.format].label}</option>`).join('')}</select></label>
+    <div class="note red" id="lrBusy" hidden></div>
+    <label class="field"><span>Film</span><select id="lrFilm">${filmOpts}</select>
+      <small><button type="button" class="linkbtn" id="lrAddFilm">Film not listed? Add it</button></small></label>
+    <div class="row2">
+      <label class="field"><span>Shoot at ISO</span><select id="lrIso">${ISOS.map(v => `<option value="${v}">${v}</option>`).join('')}</select><small id="lrPush"></small></label>
+      <label class="field"><span>Exposures</span><input type="number" id="lrExp" min="1" max="99" inputmode="numeric"></label>
+    </div>
+    <div class="btns"><button class="btn white" id="lrGo">Load roll</button></div>`;
+  openSheet('Load a roll', html, b => {
+    const q = sel => b.querySelector(sel);
+    let expTouched = false;
+    const film = () => filmById(q('#lrFilm').value);
+    const push = () => { const f = film(); q('#lrPush').textContent = f ? `Box ISO ${f.iso} · ${pushPull(+q('#lrIso').value, f.iso)}` : ''; };
+    const cam = () => {
+      const c = camById(q('#lrCam').value), busy = loadedRollOf(c.id);
+      const n = q('#lrBusy');
+      n.hidden = !busy;
+      if (busy) n.textContent = `${c.name} still has ${busy.filmName} in it (${rollShots(busy.id).length} frames logged). Loading this roll marks that one finished.`;
+      if (!expTouched) q('#lrExp').value = EXPOSURES[c.format] || 36;
+    };
+    const setIso = () => { const f = film(); if (f) q('#lrIso').value = String(ISOS.includes(f.iso) ? f.iso : 400); push(); };
+    setIso(); cam();
+    q('#lrCam').addEventListener('change', cam);
+    q('#lrFilm').addEventListener('change', setIso);
+    q('#lrIso').addEventListener('change', push);
+    q('#lrExp').addEventListener('input', () => { expTouched = true; });
+    q('#lrAddFilm').addEventListener('click', () => {
+      const c = q('#lrCam').value;
+      openFilmEditor(f => openLoadRoll({ ...pre, cameraId: c, filmId: f.id }));
+    });
+    q('#lrGo').addEventListener('click', () => {
+      const c = camById(q('#lrCam').value), f = film();
+      if (!c || !f) return;
+      const busy = loadedRollOf(c.id);
+      if (busy) { busy.status = 'finished'; busy.finishedAt = new Date().toISOString(); }
+      const exposures = clamp(parseInt(q('#lrExp').value, 10) || EXPOSURES[c.format] || 36, 1, 99);
+      const roll = { id: uid(), cameraId: c.id, cameraName: c.name, filmId: f.id, filmName: f.name, boxIso: f.iso,
+        ratedIso: +q('#lrIso').value, exposures, status: 'loaded', loadedAt: new Date().toISOString(), finishedAt: null, developedAt: null };
+      lb.rolls.unshift(roll);
+      cfg.lastFilmId = f.id;
+      saveLB(); store.save();
+      activateRoll(roll.id);
+      if (pre.back) pre.back(roll); else closeSheet();
+      explain('Roll loaded', `${f.name} @ ${roll.ratedIso} in the ${c.name}. The meter is set to ISO ${roll.ratedIso}; frames count from 1.`);
+    });
+  });
+}
+
+/* Cameras & films ------------------------------------------------- */
+function openCameraEditor(id, back, heading) {
+  const orig = id ? camById(id) : null;
+  const cam = orig ? { ...orig, lenses: orig.lenses.map(l => ({ ...l })) } : { id: uid(), name: '', format: '35', lenses: [] };
+  const html = `
+    <label class="field"><span>Name</span><input type="text" id="ceName" maxlength="40" placeholder="e.g. Pentax K1000" autocomplete="off"></label>
+    <label class="field"><span>Film format</span><select id="ceFmt">${fmtOptions(cam.format)}</select></label>
+    <div class="field plain"><span class="lbl">Lenses</span><div class="lenschips" id="ceLenses"></div>
+      <div class="row2">
+        <label class="field"><span>Focal length (mm)</span><input type="number" id="ceFocal" min="4" max="1200" inputmode="numeric" placeholder="50"></label>
+        <label class="field"><span>Widest aperture</span><select id="ceMax"><option value="">—</option>${AP_THIRDS.map(a => `<option value="${a}">f/${a}</option>`).join('')}</select></label>
+      </div>
+      <button type="button" class="btn" id="ceAddLens">Add lens</button>
+      <small style="display:block;color:var(--faint);font-size:13px;margin-top:8px">A fixed-lens camera gets its one lens.</small>
+    </div>
+    <div class="btns"><button class="btn white" id="ceSave">Save camera</button>${orig ? '<button class="btn" id="ceDel">Delete camera</button>' : ''}</div>
+    <div class="status" id="ceMsg"></div>`;
+  openSheet(heading || (orig ? 'Edit camera' : 'Add camera'), html, b => {
+    const q = sel => b.querySelector(sel);
+    q('#ceName').value = cam.name;
+    const chips = () => {
+      q('#ceLenses').innerHTML = cam.lenses.length
+        ? cam.lenses.map(l => `<span class="lenschip">${esc(lensLabel(l))}<button type="button" data-rm="${l.id}" aria-label="Remove lens">×</button></span>`).join('')
+        : '<span class="s-meta">No lenses yet</span>';
+    };
+    const addLens = () => {
+      const v = parseFloat(q('#ceFocal').value);
+      if (!isFinite(v) || v < 4 || v > 1200) return false;
+      cam.lenses.push({ id: uid(), focal: Math.round(v), maxAp: q('#ceMax').value || null });
+      cam.lenses.sort((a, c) => a.focal - c.focal);
+      q('#ceFocal').value = ''; q('#ceMax').value = '';
+      chips();
+      return true;
+    };
+    chips();
+    q('#ceAddLens').addEventListener('click', () => { if (!addLens()) q('#ceMsg').textContent = 'Enter the focal length in mm first.'; else q('#ceMsg').textContent = ''; });
+    q('#ceLenses').addEventListener('click', e => {
+      const x = e.target.closest('[data-rm]'); if (!x) return;
+      cam.lenses = cam.lenses.filter(l => l.id !== x.dataset.rm); chips();
+    });
+    q('#ceSave').addEventListener('click', () => {
+      const name = q('#ceName').value.trim();
+      if (!name) { q('#ceMsg').textContent = 'Give the camera a name.'; q('#ceName').focus(); return; }
+      if (q('#ceFocal').value) addLens();
+      cam.name = name; cam.format = q('#ceFmt').value;
+      if (orig) Object.assign(orig, cam); else lb.cameras.push(cam);
+      saveLB(); refreshFocalRuler();
+      const r = activeRoll();
+      if (r && r.cameraId === cam.id) activateRoll(r.id);
+      renderGear(); renderLogbook(); renderBars();
+      if (back) back(orig || cam); else closeSheet();
+    });
+    if (orig) q('#ceDel').addEventListener('click', () => {
+      if (loadedRollOf(orig.id)) { q('#ceMsg').textContent = 'Finish the roll that\'s loaded in this camera first.'; return; }
+      const n = lb.rolls.filter(r => r.cameraId === orig.id).length;
+      if (!confirm(`Delete ${orig.name}?${n ? ` Its ${n} finished roll${n === 1 ? '' : 's'} stay in the logbook.` : ''}`)) return;
+      lb.cameras = lb.cameras.filter(c => c.id !== orig.id);
+      saveLB(); refreshFocalRuler(); renderGear(); renderLogbook(); closeSheet();
+    });
+  });
+}
+
+function openFilmEditor(back) {
+  const html = `
+    <label class="field"><span>Film name</span><input type="text" id="feName" maxlength="50" placeholder="e.g. Kodak Vision3 250D" autocomplete="off"></label>
+    <div class="row2">
+      <label class="field"><span>Box ISO</span><select id="feIso">${ISOS.map(v => `<option value="${v}"${v === 400 ? ' selected' : ''}>${v}</option>`).join('')}</select></label>
+      <label class="field"><span>Type</span><select id="feType">${Object.entries(FILM_TYPES).map(([k, l]) => `<option value="${k}">${l}</option>`).join('')}</select></label>
+    </div>
+    <div class="btns"><button class="btn white" id="feSave">Save film</button></div>
+    <div class="status" id="feMsg"></div>`;
+  openSheet('Add film', html, b => {
+    const q = sel => b.querySelector(sel);
+    q('#feSave').addEventListener('click', () => {
+      const name = q('#feName').value.trim();
+      if (!name) { q('#feMsg').textContent = 'Give the film a name.'; return; }
+      const f = { id: uid(), name, iso: +q('#feIso').value, type: q('#feType').value };
+      lb.films.push(f); saveLB(); renderGear();
+      if (back) back(f); else closeSheet();
+    });
+  });
+}
+
+/* Logbook & gear views -------------------------------------------- */
+function frameRow(s) {
+  migrateShot(s);
+  const lens = lensOf(s);
+  return `<button class="frame" data-shot="${s.id}">${s.img ? `<img src="${s.img}" alt="">` : '<img alt="">'}<div>
+    <div class="fn">${s.frame != null && s.rollId ? 'Frame ' + s.frame : 'Shot'} · ${esc(fmtWhen(s.at))}${s.location ? ' · GPS' : ''}</div>
+    <div class="fp">${esc(apLabel(s.used.apI))} · ${esc(shLabel(s.used.shK3))}</div>
+    <div class="s-meta">EV₁₀₀ ${s.ev100.toFixed(1)} · ISO ${s.iso}${lens ? ' · ' + esc(lensLabel(lens)) : ''}</div>
+    ${s.notes ? `<div class="s-notes">${esc(s.notes.length > 140 ? s.notes.slice(0, 140) + '…' : s.notes)}</div>` : ''}
+  </div></button>`;
+}
+function renderLogbook() {
+  const list = $('#shotList');
+  const order = { loaded: 0, finished: 1, developed: 2 };
+  const rolls = lb.rolls.slice().sort((a, b) => order[a.status] - order[b.status] || b.loadedAt.localeCompare(a.loadedAt));
+  const loose = shots.filter(s => !s.rollId || !rollById(s.rollId));
+  if (!rolls.length && !loose.length) {
+    list.innerHTML = '<div class="empty">Nothing logged yet. Add your camera in Gear, load a roll, then tap the red circle.</div>';
+    return;
+  }
+  list.innerHTML = rolls.map(r => {
+    const fs = rollShots(r.id).slice().sort((a, b) => (a.frame ?? 999) - (b.frame ?? 999) || a.at.localeCompare(b.at));
+    const active = lb.activeRollId === r.id && r.status === 'loaded';
+    const dates = `Loaded ${fmtDate(r.loadedAt)}${r.finishedAt ? ' · finished ' + fmtDate(r.finishedAt) : ''}${r.developedAt ? ' · developed ' + fmtDate(r.developedAt) : ''}`;
+    const acts = [
+      r.status === 'loaded' && !active ? `<button class="btn" data-act="use" data-id="${r.id}">Meter for this roll</button>` : '',
+      r.status === 'loaded' ? `<button class="btn" data-act="finish" data-id="${r.id}">Finish roll</button>` : '',
+      r.status === 'finished' ? `<button class="btn" data-act="dev" data-id="${r.id}">Mark developed</button>` : '',
+      `<button class="btn" data-act="del" data-id="${r.id}">Delete roll</button>`,
+    ].join('');
+    return `<div class="roll"><div class="roll-head"><b>${esc(cameraName(r))}<span class="rstat ${r.status}">${ROLL_STATUS[r.status]}</span></b>
+      <div class="sub">${esc(r.filmName)} @ ${r.ratedIso} (${pushPull(r.ratedIso, r.boxIso)}) · ${fs.length} of ${r.exposures} frames logged<br>${dates}${active ? ' · <span class="cur">metering for this roll</span>' : ''}</div></div>
+      <div class="roll-acts">${acts}</div>${fs.map(frameRow).join('')}</div>`;
+  }).join('') + (loose.length ? `<div class="roll"><div class="roll-head"><b>Not on a roll</b>
+      <div class="sub">${loose.length} shot${loose.length === 1 ? '' : 's'} metered without a roll. Open one to put it on a roll.</div></div>${loose.map(frameRow).join('')}</div>` : '');
+}
+function renderGear() {
+  $('#camList').innerHTML = lb.cameras.length ? lb.cameras.map(c => {
+    const r = loadedRollOf(c.id);
+    return `<div class="gear"><div><b>${esc(c.name)}</b><div class="sub">${FORMATS[c.format].label} · ${c.lenses.length ? esc(c.lenses.map(lensLabel).join(', ')) : 'no lenses added'}<br>${
+      r ? `Loaded: ${esc(r.filmName)} @ ${r.ratedIso} · next frame ${nextFrame(r)} of ${r.exposures}` : 'Empty'}</div></div>
+      <div style="display:flex;flex-direction:column;gap:6px"><button class="btn" data-cam-edit="${c.id}">Edit</button>${r ? '' : `<button class="btn white" data-cam-load="${c.id}">Load</button>`}</div></div>`;
+  }).join('') : '<div class="empty">No cameras yet. Add the cameras you shoot film with, and their lenses.</div>';
+  $('#filmIntro').textContent = `${FILMS_BUILTIN.length} common films are built in. Add any others here.`;
+  $('#filmList').innerHTML = lb.films.map(f => `<div class="gear"><div><b>${esc(f.name)}</b><div class="sub">ISO ${f.iso} · ${FILM_TYPES[f.type]}</div></div><button class="x" data-film-del="${f.id}" aria-label="Delete ${esc(f.name)}">×</button></div>`).join('');
+}
+
+// Lens ruler: the standard focal lengths plus every lens you've added
+function focalValues() { return [...new Set([...FOCALS, ...lb.cameras.flatMap(c => c.lenses.map(l => l.focal))])].sort((a, b) => a - b); }
+function refreshFocalRuler() { if (rulers.focal) rulers.focal.setValues(focalValues(), cfg.focal); }
+
+async function exportLogbook() {
+  const data = { tool: 'SwissArmyPhotoKnife logbook', version: VERSION, exportedAt: new Date().toISOString(),
+    cameras: lb.cameras, films: lb.films, rolls: lb.rolls, shots: shots.map(({ locPending, locError, ...s }) => s) };
+  try {
+    if (await saveTextFile(`sapk-logbook-${new Date().toISOString().slice(0, 10)}.json`, JSON.stringify(data, null, 1)))
+      track('Logbook exported', { shots: shots.length });
+  } catch (e) {
+    explain('Logbook not saved', (e && e.message) || 'The file could not be written.', 5000);
+  }
+}
+
+function initLogbook() {
+  // Metering-for strip: header toggles, button opens the roll picker
+  let forOpen = false;   // always starts collapsed
+  const applyFor = () => { $('#forMore').hidden = !forOpen; $('#btnFor').setAttribute('aria-expanded', forOpen); };
+  $('#btnFor').addEventListener('click', () => { forOpen = !forOpen; applyFor(); });
+  $('#btnRolls').addEventListener('click', openRollPicker);
+  applyFor();
+  // Keep the start screen and explanations clear of the strip, whatever its height
+  const fb = $('#forbar');
+  const setH = () => $('#finder').style.setProperty('--forbar-h', fb.offsetHeight + 'px');
+  if ('ResizeObserver' in window) new ResizeObserver(setH).observe(fb);
+  setH();
+  $('#sheetClose').addEventListener('click', closeSheet);
+  sheet.addEventListener('click', e => {   // tap on the dimmed area above the sheet
+    if (e.target !== sheet) return;
+    const r = sheet.getBoundingClientRect();
+    if (e.clientY < r.top || e.clientY > r.bottom) closeSheet();
+  });
+  sheet.addEventListener('close', () => {
+    const s = shots.find(x => x.id === st.sheetShotId);
+    if (s) { clearTimeout(shotSaveTimer); persistShot(s); }
+    st.sheetShotId = null;
+    renderLogbook(); renderGear(); renderBars();
+  });
+  $('#shotList').addEventListener('click', e => {
+    const f = e.target.closest('[data-shot]');
+    if (f) { openNoteSheet(f.dataset.shot); return; }
+    const a = e.target.closest('[data-act]'); if (!a) return;
+    const r = rollById(a.dataset.id); if (!r) return;
+    const now = new Date().toISOString();
+    if (a.dataset.act === 'use') activateRoll(r.id);
+    if (a.dataset.act === 'finish') {
+      if (!confirm(`Finish ${r.filmName} in the ${cameraName(r)}?`)) return;
+      r.status = 'finished'; r.finishedAt = now;
+      if (lb.activeRollId === r.id) lb.activeRollId = null;
+    }
+    if (a.dataset.act === 'dev') { r.status = 'developed'; r.developedAt = now; }
+    if (a.dataset.act === 'del') {
+      const n = rollShots(r.id).length;
+      if (!confirm(`Delete this roll?${n ? ` Its ${n} shot${n === 1 ? '' : 's'} move to “Not on a roll”.` : ''}`)) return;
+      rollShots(r.id).forEach(s => { s.rollId = null; persistShot(s); });
+      lb.rolls = lb.rolls.filter(x => x.id !== r.id);
+      if (lb.activeRollId === r.id) lb.activeRollId = null;
+    }
+    saveLB(); renderLogbook(); renderGear(); renderUI(true);
+  });
+  $('#camList').addEventListener('click', e => {
+    const ed = e.target.closest('[data-cam-edit]'); if (ed) { openCameraEditor(ed.dataset.camEdit); return; }
+    const ld = e.target.closest('[data-cam-load]'); if (ld) openLoadRoll({ cameraId: ld.dataset.camLoad });
+  });
+  $('#filmList').addEventListener('click', e => {
+    const d = e.target.closest('[data-film-del]'); if (!d) return;
+    const f = lb.films.find(x => x.id === d.dataset.filmDel);
+    if (!f || !confirm(`Delete ${f.name} from your films? Rolls already shot on it keep its name.`)) return;
+    lb.films = lb.films.filter(x => x.id !== f.id); saveLB(); renderGear();
+  });
+  $('#btnAddCam').addEventListener('click', () => openCameraEditor(null));
+  $('#btnAddFilm').addEventListener('click', () => openFilmEditor());
+  $('#btnLoadRoll2').addEventListener('click', () => openLoadRoll());
+  $('#btnExport').addEventListener('click', exportLogbook);
+  $('#setNotes').checked = cfg.notesOnCapture;
+  $('#setLoc').checked = cfg.saveLoc;
+  $('#setNotes').addEventListener('change', e => { cfg.notesOnCapture = e.target.checked; store.save(); });
+  $('#setLoc').addEventListener('change', e => { cfg.saveLoc = e.target.checked; store.save(); });
+}
+
+async function loadShots() {
+  try {
+    let old = null;
+    try { old = JSON.parse(localStorage.getItem(OLD_SHOTS_KEY)); } catch {}
+    if (Array.isArray(old) && old.length) {          // one-time move from v0.2
+      for (const s of old) await DB.put(migrateShot(s));
+      localStorage.removeItem(OLD_SHOTS_KEY);
+    }
+    shots = (await DB.all()).map(migrateShot).sort((a, b) => b.at.localeCompare(a.at));
+  } catch (e) {
+    logMsg('Shot storage unavailable: ' + (e && e.name));
+    shots = [];
+  }
+  renderLogbook(); renderGear(); renderUI(true);
+}
+
+function calIsoNote() { $('#calIsoNote').textContent = `Using ISO ${cfg.iso} and ${cfg.focal}mm from the rulers above — set the same on your camera.`; }
+
+/* Keep the screen on while testing */
+async function requestWake() {
+  if (Shell) { try { await Shell.keepAwake({ on: true }); } catch {} return; }   // a window flag in the app; no web view support needed
+  try { if ('wakeLock' in navigator && document.visibilityState === 'visible') st.wake = await navigator.wakeLock.request('screen'); } catch {}
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  if (st.stream) requestWake();
+  if (st.track && st.track.readyState === 'ended') startCamera(cfg.deviceId).catch(e => logMsg('Restart failed: ' + e.name));
+});
+
+initControls();
+initLogbook();
+renderUI(true);
+renderLogbook();
+renderGear();
+renderCal();
+renderVerdict();
+loadShots();
+window.__sapk = { st, cfg, Meter, lb, get cal() { return cal; }, get shots() { return shots; } };   // for debugging in DevTools
+})();
+</script>
+</body>
+</html>
