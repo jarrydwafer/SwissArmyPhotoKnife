@@ -19,7 +19,7 @@ import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 
 /**
- * The few things the page can do in Chrome but not in an Android web view:
+ * The few things the page can do in a browser but not in an Android web view:
  * save a file, open the share sheet, keep the screen on.
  * The page reaches it as Capacitor.Plugins.SapkShell and falls back to the
  * browser's own features when it is not there.

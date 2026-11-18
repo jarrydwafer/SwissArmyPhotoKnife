@@ -395,7 +395,7 @@ plausible.init(window.Capacitor&&Capacitor.isNativePlatform&&Capacitor.isNativeP
   <!-- TESTS -->
   <section class="panel" id="pTests" role="tabpanel" hidden>
     <h2>What we're finding out</h2>
-    <p>Can Chrome lock the exposure? Does brightness follow the exposure? Does it report live auto-exposure values? How far off is it from a real meter? Run 2 and 3, do a few calibration points, then share the report.</p>
+    <p>Can this phone lock the exposure? Does brightness follow the exposure? Does it report live auto-exposure values? How far off is it from a real meter? Run 2 and 3, do a few calibration points, then share the report.</p>
 
     <div class="card">
       <h3><span class="n">1</span> Camera &amp; controls <span class="badge idle" id="b1">Not run</span></h3>
@@ -415,7 +415,7 @@ plausible.init(window.Capacitor&&Capacitor.isNativePlatform&&Capacitor.isNativeP
 
     <div class="card">
       <h3><span class="n">3</span> Live auto-exposure <span class="badge idle" id="b3">Not run</span></h3>
-      <p>Switches to auto exposure for 10 seconds. During that time, point at a bright window, then at a dark corner, then back. The page checks whether Chrome reports the shutter and ISO the camera picks.</p>
+      <p>Switches to auto exposure for 10 seconds. During that time, point at a bright window, then at a dark corner, then back. The app checks whether the camera reports the shutter and ISO it picks.</p>
       <div class="btns"><button class="btn white" id="btnAE" disabled>Run (10 s)</button></div>
       <div class="status" id="aeStatus"></div>
       <div id="aeOut"></div>
@@ -464,7 +464,7 @@ plausible.init(window.Capacitor&&Capacitor.isNativePlatform&&Capacitor.isNativeP
   <section class="panel" id="pSetup" role="tabpanel" hidden>
     <h2>Setup</h2>
     <label class="field"><span>Phone camera</span><select id="selCam"><option>Start the camera first</option></select>
-      <small>Chrome lists each camera it can open. The main back camera is usually the first “facing back”.</small></label>
+      <small>Starts on the main back camera. If you pick another, change the aperture and focal length below to match it.</small></label>
     <div class="row2">
       <label class="field"><span>Phone aperture N</span><input type="number" id="inN" step="0.1" min="0.8" max="8" inputmode="decimal"></label>
       <label class="field"><span>Phone focal (35mm eq.)</span><input type="number" id="inEq" step="0.5" min="10" max="120" inputmode="decimal"></label>
@@ -627,7 +627,7 @@ const fracWord = f => {
 /* ================================================================
    Config & persistence (this phone only)
    ================================================================ */
-const DEFAULTS = { N: 1.8, phoneEq: 23, format: '35', iso: 400, focal: 50, k: 1, C: 0, prefI: 6, pairLock: 'none', lockK: -8, deviceId: null, calAp: 18, calSh3: -21, calDev: 0,
+const DEFAULTS = { N: 1.8, phoneEq: 23, format: '35', iso: 400, focal: 50, k: 1, C: 0, prefI: 6, pairLock: 'none', lockK: -8, deviceId: null, camChosen: false, camLabel: null, calAp: 18, calSh3: -21, calDev: 0,
                    aeLive: null, notesOnCapture: true, saveLoc: true, lastFilmId: 'kodak-portra-400' };
 const store = {
   load() { try { return JSON.parse(localStorage.getItem(KEY)) || {}; } catch { return {}; } },
@@ -749,7 +749,21 @@ function safeSettings() { try { return st.track ? st.track.getSettings() : {}; }
 /* ================================================================
    Camera
    ================================================================ */
-async function startCamera(deviceId) {
+// Android names cameras "camera 2, facing back". The lowest-numbered back camera is the main one;
+// asking for "environment" can land on the ultrawide, which the default aperture and focal length don't describe.
+function mainBackCamera(cameras) {
+  const back = cameras.map(d => ({ d, m: /(\d+), facing back$/i.exec(d.label || '') })).filter(c => c.m);
+  back.sort((a, b) => a.m[1] - b.m[1]);
+  return back.length ? back[0].d : null;
+}
+
+// The installed app gets new device ids on every launch, so a saved id can't identify a camera there.
+// Labels stay the same: open whatever is possible, then move to the camera that was asked for.
+function wantedCamera(cameras) {
+  return cfg.camChosen ? cameras.find(d => d.label === cfg.camLabel) || null : mainBackCamera(cameras);
+}
+
+async function startCamera(deviceId, mayRedirect = true) {
   stopStream();
   // 30fps lets a locked exposure run to 1/30 s before ISO has to rise
   const v = { width: { ideal: 1280 }, height: { ideal: 960 }, aspectRatio: { ideal: 4 / 3 }, frameRate: { ideal: 30 } };
@@ -758,7 +772,7 @@ async function startCamera(deviceId) {
   try {
     stream = await navigator.mediaDevices.getUserMedia({ video: v, audio: false });
   } catch (e) {
-    if (deviceId) { logMsg('Could not open saved camera (' + e.name + '), trying default'); cfg.deviceId = null; return startCamera(null); }
+    if (deviceId) { logMsg('Could not open saved camera (' + e.name + '), trying default'); cfg.deviceId = null; return startCamera(null, mayRedirect); }
     throw e;
   }
   st.stream = stream;
@@ -771,6 +785,10 @@ async function startCamera(deviceId) {
   readCaps();
   await listCameras();
   const s = safeSettings();
+  if (mayRedirect) {   // labels only exist once a camera is open, so this can't run earlier
+    const want = wantedCamera(st.cameras);
+    if (want && want.deviceId !== s.deviceId) { logMsg(`Switching to "${want.label}"`); return startCamera(want.deviceId, false); }
+  }
   cfg.deviceId = s.deviceId || null; store.save();
   logMsg(`Opened "${st.track.label}" ${s.width}×${s.height} @ ${s.frameRate || '?'}fps`);
   $('#startPane').hidden = true;
@@ -778,7 +796,7 @@ async function startCamera(deviceId) {
   loop(gen);
   requestWake();
   track('Camera started');
-  // Seed the lock from auto-exposure if Chrome reports it, then lock.
+  // Seed the lock from auto-exposure if the camera reports it, then lock.
   if (st.canLock) {
     await setMode('auto');
     await sleep(900);
@@ -914,7 +932,7 @@ async function pollAE() {
   st.aePolling = true;
   const a = safeSettings();
   const t0 = performance.now();
-  // Asking ImageCapture for photo settings makes Chrome re-read the camera state.
+  // Asking ImageCapture for photo settings forces a fresh read of the camera state.
   if (st.ic && st.ic.getPhotoSettings) { try { await st.ic.getPhotoSettings(); } catch {} }
   const ms = performance.now() - t0;
   const b = safeSettings();
@@ -1155,10 +1173,10 @@ function explain(title, text, ms = 5000) {
 const MODE_TEXT = {
   locked: () => 'The page fixes the phone\'s shutter and ISO itself, then measures how bright the scene is against those known settings. This is the accurate mode.',
   auto: () => cfg.aeLive === true
-    ? 'The phone picks its own exposure, like its camera app, and Chrome tells the page what it picked. Useful as a cross-check.'
+    ? 'The phone picks its own exposure, like its camera app, and reports what it picked. Useful as a cross-check.'
     : cfg.aeLive === false
-      ? 'The phone picks its own exposure, like its camera app. On this phone Chrome doesn\'t report what it picked (test 3), so Auto can\'t give a reading. Use Locked.'
-      : 'The phone picks its own exposure, like its camera app. It only gives a reading if Chrome reports what the phone picked. Test 3 checks that.',
+      ? 'The phone picks its own exposure, like its camera app. This phone doesn\'t report what it picked (test 3), so Auto can\'t give a reading. Use Locked.'
+      : 'The phone picks its own exposure, like its camera app. It only gives a reading if the phone reports what it picked. Test 3 checks that.',
 };
 
 /* Aperture/speed suggestion ---------------------------------------
@@ -1270,7 +1288,7 @@ function pairFormulaLine(ev) {
 function renderFormula() {
   const { t, S } = st.cur;
   const el = $('#formula');
-  if (st.ly == null || !t || !S) { el.textContent = st.mode === 'auto' && st.track && !t ? 'Chrome is not reporting the auto-exposure\nshutter/ISO, so no reading is possible\nin Auto. Try Locked.' : 'Waiting for a reading…'; return; }
+  if (st.ly == null || !t || !S) { el.textContent = st.mode === 'auto' && st.track && !t ? 'The camera is not reporting the auto-exposure\nshutter/ISO, so no reading is possible\nin Auto. Try Locked.' : 'Waiting for a reading…'; return; }
   const Y = 2 ** st.ly;
   const T = Meter.terms({ N: cfg.N, t, S, Y, k: cfg.k, C: cfg.C });
   const ev = T.a + T.b + T.c + T.C;
@@ -1598,12 +1616,12 @@ function verdict() {
   ];
   let overall;
   if (!st.track) overall = 'Start the camera to begin.';
-  else if (!st.canLock && vA.cls === 'ok') overall = 'No exposure lock, but live auto-exposure values work. The browser can meter in Auto; the native module should do Locked.';
-  else if (!st.canLock) overall = 'Chrome offers no manual exposure on this camera. The native module has to do all the metering.';
+  else if (!st.canLock && vA.cls === 'ok') overall = 'No exposure lock, but live auto-exposure values work. The app can meter in Auto; the native module should do Locked.';
+  else if (!st.canLock) overall = 'This camera offers no manual exposure here. The native module has to do all the metering.';
   else if (!sw) overall = 'Run test 2 to finish.';
   else if (vT.cls === 'ok') overall = 'Browser metering works on this phone. The native module becomes an upgrade (incident light, lens choice), not a requirement.';
   else if (vT.cls === 'warn' && vT.txt === 'Non-linear') overall = 'Browser metering works with a correction (slope k). The native module will be more accurate.';
-  else overall = 'Chrome accepts the settings but the image doesn\'t follow them. The native module has to do the metering.';
+  else overall = 'The camera accepts the settings but the image doesn\'t follow them. The native module has to do the metering.';
   return { items, overall };
 }
 function renderVerdict() {
@@ -1760,7 +1778,7 @@ function initControls() {
 
   // Mode: explain what each one does every time it's tapped
   $('#modeLocked').addEventListener('click', () => {
-    if (!st.canLock && st.track) { explain('Locked unavailable', 'Chrome doesn\'t let the page set this camera\'s exposure, so only Auto is possible here.'); return; }
+    if (!st.canLock && st.track) { explain('Locked unavailable', 'This camera\'s exposure can\'t be set from here, so only Auto is possible.'); return; }
     explain('Locked', MODE_TEXT.locked());
     if (st.track && !st.testing) setMode('locked');
   });
@@ -1844,6 +1862,8 @@ function initControls() {
   // Setup
   $('#selCam').addEventListener('change', async e => {
     if (!st.track) return;
+    cfg.camChosen = true;   // the user's choice now outranks the main-camera default
+    cfg.camLabel = e.target.selectedOptions[0].textContent;
     try { await startCamera(e.target.value); } catch (err) { logMsg('Switch failed: ' + err.name); }
   });
   const num = (id, key, lo, hi) => {
@@ -1875,13 +1895,13 @@ async function startFromUI() {
   const msg = $('#startMsg');
   msg.classList.remove('err');
   $('#startPane').hidden = false;
-  if (!window.isSecureContext) { msg.textContent = 'This page has to be opened over HTTPS for Chrome to allow the camera.'; msg.classList.add('err'); return; }
+  if (!window.isSecureContext) { msg.textContent = 'This page has to be opened over HTTPS to use the camera.'; msg.classList.add('err'); return; }
   if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) { msg.textContent = 'This browser has no camera access for web pages.'; msg.classList.add('err'); return; }
   $('#btnStart').disabled = true; $('#btnCam').disabled = true;
   msg.textContent = 'Opening camera…';
   try { await startCamera(cfg.deviceId); }
   catch (e) {
-    msg.textContent = e.name === 'NotAllowedError' ? (NATIVE ? 'Camera permission was refused. Allow it in Android settings, Apps, SwissArmyPhotoKnife, Permissions, then try again.' : 'Camera permission was refused. Allow it in Chrome\'s site settings and try again.') : 'Could not open the camera: ' + e.name;
+    msg.textContent = e.name === 'NotAllowedError' ? (NATIVE ? 'Camera permission was refused. Allow it in Android settings, Apps, SwissArmyPhotoKnife, Permissions, then try again.' : 'Camera permission was refused. Allow it in your browser\'s site settings and try again.') : 'Could not open the camera: ' + e.name;
     msg.classList.add('err');
     logMsg('Start failed: ' + e.name + ' ' + (e.message || ''));
   } finally {
@@ -2007,7 +2027,7 @@ function captureShot() {
 const r_name = r => `${cameraName(r)}, ${r.filmName}`;
 
 function fetchLocation(s) {
-  if (!('geolocation' in navigator)) { s.locError = 'No GPS in this browser'; return; }
+  if (!('geolocation' in navigator)) { s.locError = 'No GPS on this device'; return; }
   s.locPending = true; s.locError = null;
   updateLocUI(s);
   navigator.geolocation.getCurrentPosition(pos => {
