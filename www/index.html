@@ -292,7 +292,7 @@ plausible.init(window.Capacitor&&Capacitor.isNativePlatform&&Capacitor.isNativeP
     <span class="kr">What you see</span>
     <span class="kr">is not what</span>
     <span class="kr">the film sees</span>
-    <p id="startMsg">Tests what Chrome lets this page do with your camera. Nothing leaves your phone unless you share it.</p>
+    <p id="startMsg">Point your phone at the scene and read the exposure for your film and lens. Your logbook stays on this phone.</p>
     <button class="btn white" id="btnStart">Start camera</button>
   </div>
   <div class="forbar" id="forbar">
@@ -502,6 +502,42 @@ const CAP = window.Capacitor;
 const NATIVE = !!(CAP && CAP.isNativePlatform && CAP.isNativePlatform());
 const Shell = NATIVE && CAP.Plugins ? CAP.Plugins.SapkShell : null;   // save file, share sheet, keep awake
 const track = (name, props) => { try { if (window.plausible) window.plausible(name, props ? { props } : undefined); } catch {} };
+
+// Events that must not get lost. Film gets shot where there is no signal, and the Plausible script
+// drops whatever it can't send, so these wait on the phone until the stats server has accepted them.
+const STATS = { url: 'https://stats.jarrydwafer.com/api/event', domain: 'meter.jarrydwafer.com', key: 'sapk.statsQueue.v1', max: 1000 };
+const statsQueue = {
+  read() { try { return JSON.parse(localStorage.getItem(STATS.key)) || []; } catch { return []; } },
+  write(q) { try { localStorage.setItem(STATS.key, JSON.stringify(q.slice(-STATS.max))); } catch {} },
+};
+const statsAllowed = () => {
+  try { return (NATIVE || location.hostname === STATS.domain) && localStorage.getItem('plausible_ignore') !== 'true'; } catch { return false; }
+};
+let statsSending = false;
+async function sendStats() {
+  if (statsSending || !statsAllowed()) return;
+  statsSending = true;
+  try {
+    for (let q = statsQueue.read(); q.length; q = statsQueue.read()) {
+      const r = await fetch(STATS.url, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, keepalive: true,
+        body: JSON.stringify({ n: q[0].n, u: location.href, d: STATS.domain, r: null, p: q[0].p }) });
+      if (r.status === 429 || r.status >= 500) break;      // try again later; other refusals would never succeed
+      statsQueue.write(statsQueue.read().slice(1));
+    }
+  } catch {} finally { statsSending = false; }             // offline: the rest stays queued
+}
+// Plausible stamps an event when it arrives and can't be told otherwise, so the time a shot was
+// really taken travels as a property: the phone's local date and hour.
+const takenHour = iso => {
+  const d = new Date(iso), p = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:00`;
+};
+function trackReliably(n, props) {
+  if (!statsAllowed()) return;
+  statsQueue.write([...statsQueue.read(), { n, p: { ...props, ...(NATIVE ? { app: CAP.getPlatform() } : {}) } }]);
+  sendStats();
+}
+window.addEventListener('online', sendStats);
 const KEY = 'sapk.cameraTest.v1';
 const $ = (s, el = document) => el.querySelector(s);
 const log2 = Math.log2;
@@ -672,7 +708,7 @@ const DB = (() => {
 })();
 function persistShot(s) {
   const { locPending, locError, ...keep } = s;   // transient UI state isn't stored
-  return DB.put(keep).catch(e => { logMsg('Shot save failed: ' + (e && e.name)); explain('Couldn\'t save', 'The phone refused to store this shot. Download the logbook to keep a copy.'); });
+  return DB.put(keep).then(() => true).catch(e => { logMsg('Shot save failed: ' + (e && e.name)); explain('Couldn\'t save', 'The phone refused to store this shot. Download the logbook to keep a copy.'); return false; });
 }
 function removeShot(id) {
   shots = shots.filter(s => String(s.id) !== String(id));
@@ -1958,8 +1994,7 @@ function captureShot() {
     phone: { t: st.cur.t, S: st.cur.S, Y: st.ly != null ? +(2 ** st.ly).toFixed(4) : null, N: cfg.N, k: cfg.k, C: cfg.C },
   };
   shots.unshift(shot);
-  persistShot(shot);
-  track('Shot saved', { roll: roll ? 'yes' : 'no' });
+  persistShot(shot).then(stored => { if (stored) trackReliably('Shot saved', { roll: roll ? 'yes' : 'no', taken: takenHour(shot.at) }); });
   if (cfg.saveLoc) fetchLocation(shot);
   const f = $('#finder'); f.classList.remove('flash'); void f.offsetWidth; f.classList.add('flash');
   try { if (navigator.vibrate) navigator.vibrate(25); } catch {}
@@ -2447,6 +2482,7 @@ async function requestWake() {
 }
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return;
+  sendStats();
   if (st.stream) requestWake();
   if (st.track && st.track.readyState === 'ended') startCamera(cfg.deviceId).catch(e => logMsg('Restart failed: ' + e.name));
 });
@@ -2459,6 +2495,7 @@ renderGear();
 renderCal();
 renderVerdict();
 loadShots();
+sendStats();
 window.__sapk = { st, cfg, Meter, lb, get cal() { return cal; }, get shots() { return shots; } };   // for debugging in DevTools
 })();
 </script>

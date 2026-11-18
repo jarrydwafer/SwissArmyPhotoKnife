@@ -62,7 +62,9 @@ The logbook, the calibration and the settings are stored on the phone and are
 not uploaded. The page loads a [Plausible](https://plausible.io) script from
 `stats.jarrydwafer.com` that counts visits and a few events (camera started,
 shot saved, logbook exported) without cookies and without your readings,
-notes or location. Offline, nothing is sent.
+notes or location. Each "shot saved" event carries the date and hour it was
+taken. Offline, nothing is sent; those events wait on the phone and go out when
+it is back online.
 
 ## Licence
 

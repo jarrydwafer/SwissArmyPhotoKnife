@@ -11,6 +11,10 @@ public class MainActivity extends BridgeActivity {
         registerPlugin(ShellPlugin.class);
         super.onCreate(savedInstanceState);
 
+        // The layout is fixed-size like a camera's controls. Without this the web view scales
+        // text by the Android font size, which wraps the header and pushes the reading off screen.
+        bridge.getWebView().getSettings().setTextZoom(100);
+
         // Back closes whatever the page has open (a sheet). With nothing open the app
         // steps into the background and keeps its state, instead of being destroyed.
         getOnBackPressedDispatcher()
