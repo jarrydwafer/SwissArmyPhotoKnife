@@ -57,9 +57,9 @@ button{cursor:pointer;-webkit-tap-highlight-color:transparent}
    viewfinder keeps the normal height so the EV reading stays clear of the bottom bar. */
 .finder.idle{height:calc(min(46vh,430px) * 1.4);min-height:364px}
 #video{position:absolute;left:0;top:0;width:2px;height:2px;opacity:0;pointer-events:none}
-.chips{position:absolute;display:flex;gap:6px;flex-wrap:wrap;pointer-events:none;max-width:calc(100% - 20px)}
-.chips.tl{left:10px;top:10px}
-.chips.tr{right:10px;top:10px;justify-content:flex-end}
+.chips{position:absolute;left:10px;right:10px;top:10px;display:flex;gap:3px 6px;flex-wrap:wrap;pointer-events:none}
+.chips #chipMode{margin-left:auto}   /* lens on the left, mode and metering on the right */
+.chipbreak{flex-basis:100%;height:0}  /* warnings always start on their own row, so nothing can cover them */
 .chip{font-size:12px;padding:5px 7px 4px;font-weight:700;font-style:italic;text-transform:uppercase;line-height:1;background:#000;color:#fff;border:1px solid #fff}
 .chip.red{background:var(--red);border-color:var(--red)}
 .chip.white{background:#fff;color:#000}
@@ -286,8 +286,7 @@ plausible.init(window.Capacitor&&Capacitor.isNativePlatform&&Capacitor.isNativeP
   <canvas id="view" aria-label="Metered area preview. Tap a grid cell to spot meter it."></canvas>
   <video id="video" playsinline muted></video>
   <div class="explain" id="explain" hidden role="status"><span class="kr" id="explainTitle"></span><p id="explainText"></p></div>
-  <div class="chips tl"><span class="chip red" id="chipLens">50mm · 35mm</span><span class="chip red" id="chipWarn" hidden></span><span class="chip white" id="chipWide" hidden>Lens wider than phone · full view</span></div>
-  <div class="chips tr"><span class="chip" id="chipMode">—</span><span class="chip" id="chipSpot">Average</span></div>
+  <div class="chips"><span class="chip red" id="chipLens">50mm · 35mm</span><span class="chip" id="chipMode">—</span><span class="chip" id="chipSpot">Average</span><i class="chipbreak"></i><span class="chip red" id="chipWarn" hidden></span><span class="chip white" id="chipWide" hidden>Lens wider than phone · full view</span></div>
   <div class="start" id="startPane">
     <span class="kr">What you see</span>
     <span class="kr">is not what</span>
